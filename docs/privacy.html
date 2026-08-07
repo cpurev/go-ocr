@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy Policy — go-ocr receipt scanner</title>
+<style>
+  body { max-width: 46rem; margin: 3rem auto; padding: 0 1.25rem;
+         font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+         color: #1a1a1a; background: #fff; }
+  h1 { font-size: 1.75rem; margin-bottom: 0.25rem; }
+  h2 { font-size: 1.15rem; margin-top: 2.25rem; }
+  .updated { color: #666; font-size: 0.9rem; margin-top: 0; }
+  ul { padding-left: 1.25rem; }
+  li { margin: 0.35rem 0; }
+  code { background: #f4f4f4; padding: 0.1rem 0.3rem; border-radius: 3px; font-size: 0.9em; }
+  a { color: #0645ad; }
+  @media (prefers-color-scheme: dark) {
+    body { color: #e8e8e8; background: #121212; }
+    .updated { color: #999; }
+    code { background: #262626; }
+    a { color: #6ba4ff; }
+  }
+</style>
+</head>
+<body>
+
+<h1>Privacy Policy</h1>
+<p class="updated">Last updated: 7 August 2026</p>
+
+<p>This policy covers <strong>go-ocr</strong>, a personal, non-commercial receipt-scanning
+project operated by an individual. It is not a company product, it carries no advertising,
+and it has no users beyond those the operator explicitly invites.</p>
+
+<h2>What the service does</h2>
+<p>You send a photo of a receipt to a WhatsApp number. The service downloads that image,
+reads the text on it using optical character recognition, extracts the fields that matter
+(merchant, total, date), and stores the result so it can be searched later.</p>
+
+<h2>What is collected</h2>
+<p>Only what arrives with a message you choose to send:</p>
+<ul>
+  <li>Your WhatsApp phone number, as supplied by WhatsApp with the message</li>
+  <li>The WhatsApp group identifier, if the receipt was sent in a group</li>
+  <li>The WhatsApp media identifier for the image</li>
+  <li>Text read from the receipt image: merchant, total, date, currency, tax, line items</li>
+  <li>The full raw OCR text of the image, kept so mistakes in the extraction can be corrected</li>
+  <li>The time the record was created</li>
+</ul>
+<p>No contact list, no location, no device identifiers, and no profile information are
+collected. Nothing is gathered from you except messages you deliberately send.</p>
+
+<h2>Where the image itself goes</h2>
+<p>The image is held in memory only for as long as it takes to read the text from it. Text
+recognition runs locally on the operator's own machine using Tesseract — the image is never
+uploaded to any third-party OCR or AI service. The image file is not written to disk and not
+retained; only the extracted text is stored.</p>
+
+<h2>Who it is shared with</h2>
+<p>Nobody. The extracted data is not sold, rented, shared, or used for advertising, profiling,
+or training any model. Two service providers necessarily handle data in transit or at rest:</p>
+<ul>
+  <li><strong>Meta / WhatsApp</strong> — delivers your message and hosts the image until it is
+      downloaded, under Meta's own privacy policy</li>
+  <li><strong>MongoDB Atlas</strong> — stores the extracted receipt records</li>
+</ul>
+<p>Data may also be disclosed if required by law.</p>
+
+<h2>How long it is kept</h2>
+<p>Receipt records are kept until you ask for them to be deleted, or until the project is shut
+down, at which point the database is destroyed.</p>
+
+<h2>Deleting your data</h2>
+<p>See the <a href="./data-deletion.html">data deletion instructions</a>. In short: message or
+email the operator from the WhatsApp number you used, and everything associated with that
+number is removed within 30 days.</p>
+
+<h2>Children</h2>
+<p>The service is not directed at anyone under 16 and is not knowingly used by them.</p>
+
+<h2>Changes</h2>
+<p>If this policy changes, the revised version is published at this URL with a new date at
+the top.</p>
+
+<h2>Contact</h2>
+<p>Questions, requests, or complaints: <a href="mailto:hello@talendary.com">hello@talendary.com</a></p>
+
+</body>
+</html>
