@@ -15,7 +15,7 @@ import (
 
 const commandTimeout = 20 * time.Second
 
-func (s *Server) handleTextCommand(txt whatsapp.InboundText) {
+func (s *Server) handleTextCommand(ctx context.Context, txt whatsapp.InboundText) {
 	defer func() {
 		if p := recover(); p != nil {
 			s.logger.Error("panic while handling text command",
@@ -27,10 +27,12 @@ func (s *Server) handleTextCommand(txt whatsapp.InboundText) {
 	if cmd.Kind == CommandNone {
 		s.logger.Info("webhook text message was not a command",
 			"from", txt.From, "message_id", txt.MessageID, "body_bytes", len(txt.Body))
+
+		s.forward(txt.From, txt.Body)
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
+	ctx, cancel := context.WithTimeout(ctx, commandTimeout)
 	defer cancel()
 
 	var reply string
@@ -43,7 +45,7 @@ func (s *Server) handleTextCommand(txt whatsapp.InboundText) {
 		reply = s.editReceiptReply(ctx, cmd)
 	}
 
-	s.replyTo(txt.From, reply)
+	s.broadcast(txt.From, txt.GroupID, reply)
 }
 
 func (s *Server) editReceiptReply(ctx context.Context, cmd Command) string {

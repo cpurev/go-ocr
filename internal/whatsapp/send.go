@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +13,32 @@ import (
 )
 
 const maxTextBody = 4096
+
+const (
+	recipientIndividual = "individual"
+	recipientGroup      = "group"
+)
+
+// Meta's code for a recipient who has not messaged the business in 24 hours.
+const errCodeReEngagement = 131047
+
+var ErrOutsideWindow = errors.New("whatsapp: recipient's 24-hour service window is closed")
+
+type graphError struct {
+	Error struct {
+		Message string `json:"message"`
+		Code    int    `json:"code"`
+	} `json:"error"`
+}
+
+// graphErrorCode returns Meta's error code, or 0 if the body is not an error.
+func graphErrorCode(body []byte) int {
+	var ge graphError
+	if err := json.Unmarshal(body, &ge); err != nil {
+		return 0
+	}
+	return ge.Error.Code
+}
 
 type Sender struct {
 	http          *http.Client
@@ -49,7 +76,17 @@ type textPayload struct {
 	Body       string `json:"body"`
 }
 
+// SendText sends a 1:1 message to a phone number.
 func (s *Sender) SendText(ctx context.Context, to, body string) error {
+	return s.sendText(ctx, recipientIndividual, to, body)
+}
+
+// SendGroupText sends a message to a group, using the group_id from the webhook.
+func (s *Sender) SendGroupText(ctx context.Context, groupID, body string) error {
+	return s.sendText(ctx, recipientGroup, groupID, body)
+}
+
+func (s *Sender) sendText(ctx context.Context, recipientType, to, body string) error {
 	if strings.TrimSpace(to) == "" {
 		return fmt.Errorf("whatsapp: empty recipient")
 	}
@@ -66,7 +103,7 @@ func (s *Sender) SendText(ctx context.Context, to, body string) error {
 
 	payload, err := json.Marshal(textMessage{
 		MessagingProduct: "whatsapp",
-		RecipientType:    "individual",
+		RecipientType:    recipientType,
 		To:               to,
 		Type:             "text",
 		Text:             textPayload{PreviewURL: false, Body: body},
@@ -98,6 +135,9 @@ func (s *Sender) SendText(ctx context.Context, to, body string) error {
 	case resp.StatusCode == http.StatusUnauthorized, resp.StatusCode == http.StatusForbidden:
 		return ErrUnauthorized
 	case resp.StatusCode >= 300:
+		if graphErrorCode(respBody) == errCodeReEngagement {
+			return ErrOutsideWindow
+		}
 		return fmt.Errorf("whatsapp: send failed with status %d: %s",
 			resp.StatusCode, firstLine(string(respBody)))
 	}

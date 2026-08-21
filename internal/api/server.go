@@ -10,6 +10,7 @@ import (
 	"github.com/cpurev/go-ocr/internal/httpx"
 	"github.com/cpurev/go-ocr/internal/model"
 	"github.com/cpurev/go-ocr/internal/receipt"
+	"github.com/cpurev/go-ocr/internal/relay"
 	"github.com/cpurev/go-ocr/internal/store"
 )
 
@@ -23,6 +24,9 @@ type Deps struct {
 	Replier Replier
 
 	Stores StoreDirectory
+
+	// Relay is optional; nil keeps every conversation 1:1.
+	Relay *relay.Roster
 }
 
 type StoreDirectory interface {
@@ -32,6 +36,7 @@ type StoreDirectory interface {
 
 type Replier interface {
 	SendText(ctx context.Context, to, body string) error
+	SendGroupText(ctx context.Context, groupID, body string) error
 }
 
 type Server struct {

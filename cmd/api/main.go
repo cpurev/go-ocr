@@ -20,6 +20,7 @@ import (
 	"github.com/cpurev/go-ocr/internal/config"
 	"github.com/cpurev/go-ocr/internal/ocr"
 	"github.com/cpurev/go-ocr/internal/receipt"
+	"github.com/cpurev/go-ocr/internal/relay"
 	"github.com/cpurev/go-ocr/internal/store"
 	"github.com/cpurev/go-ocr/internal/whatsapp"
 )
@@ -130,12 +131,23 @@ func run() error {
 	ingester := receipt.NewIngester(media, scanner, repo, logger).
 		WithStoreLookup(lookup, cfg.StoreOverridesOCR)
 
+	roster := relay.New(cfg.RelayNumbers)
+	switch {
+	case roster.Active():
+		logger.Info("relay enabled; replies fan out to all participants",
+			"participants", roster.Size())
+	case roster.Size() == 1:
+		logger.Warn("WHATSAPP_RELAY_NUMBERS holds a single number; relaying is inert",
+			"hint", "list every participant, comma separated, to fan messages out")
+	}
+
 	srv := api.NewServer(cfg, logger, api.Deps{
 		Scanner:  scanner,
 		Receipts: receiptStore,
 		Ingester: ingester,
 		Replier:  replier,
 		Stores:   directory,
+		Relay:    roster,
 	})
 
 	httpServer := &http.Server{

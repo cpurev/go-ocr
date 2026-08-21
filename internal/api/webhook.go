@@ -14,6 +14,7 @@ import (
 	"github.com/cpurev/go-ocr/internal/httpx"
 	"github.com/cpurev/go-ocr/internal/model"
 	"github.com/cpurev/go-ocr/internal/ocr"
+	"github.com/cpurev/go-ocr/internal/relay"
 	"github.com/cpurev/go-ocr/internal/store"
 	"github.com/cpurev/go-ocr/internal/whatsapp"
 )
@@ -68,19 +69,21 @@ func (s *Server) handleWebhookReceive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Handled inline, not in goroutines: Cloud Run throttles CPU once the
+	// response is written. Retries are safe, whatsappMediaId is unique.
 	images := n.Images()
 	for _, img := range images {
-		go s.ingestInboundImage(img)
+		s.ingestInboundImage(r.Context(), img)
 	}
 
 	for _, txt := range n.Texts() {
-		go s.handleTextCommand(txt)
+		s.handleTextCommand(r.Context(), txt)
 	}
 
 	httpx.OK(w, http.StatusOK, map[string]int{"images_accepted": len(images)}, nil)
 }
 
-func (s *Server) ingestInboundImage(img whatsapp.InboundImage) {
+func (s *Server) ingestInboundImage(ctx context.Context, img whatsapp.InboundImage) {
 	defer func() {
 		if p := recover(); p != nil {
 			s.logger.Error("panic while ingesting webhook image",
@@ -92,7 +95,7 @@ func (s *Server) ingestInboundImage(img whatsapp.InboundImage) {
 	if budget <= 0 {
 		budget = time.Minute
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), budget)
+	ctx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
 
 	created, err := s.deps.Ingester.Ingest(ctx, model.ReceiptInput{
@@ -135,24 +138,74 @@ func (s *Server) ingestInboundImage(img whatsapp.InboundImage) {
 		reply = formatReceiptReply(created)
 	}
 
-	s.replyTo(img.From, reply)
+	s.broadcast(img.From, img.GroupID, reply)
 }
 
 const replyTimeout = 15 * time.Second
 
-func (s *Server) replyTo(to, body string) {
-	if s.deps.Replier == nil || to == "" || body == "" {
+// broadcast sends body to the sender as written and to everyone else on the
+// roster with attribution. Off-roster senders get a plain 1:1 reply.
+func (s *Server) broadcast(sender, groupID, body string) {
+	if body == "" {
+		return
+	}
+
+	s.replyTo(sender, groupID, body)
+
+	for _, other := range s.deps.Relay.Others(sender) {
+		s.replyTo(other, "", attribute(sender, body))
+	}
+}
+
+// forward relays a message to the rest of the roster, skipping the sender.
+func (s *Server) forward(sender, body string) {
+	if body == "" {
+		return
+	}
+
+	for _, other := range s.deps.Relay.Others(sender) {
+		s.replyTo(other, "", attribute(sender, body))
+	}
+}
+
+// attribute labels a relayed message with who sent it.
+func attribute(sender, body string) string {
+	return "From +" + relay.Normalize(sender) + ":\n\n" + body
+}
+
+// replyTo answers the group when groupID is set, otherwise the sender.
+func (s *Server) replyTo(to, groupID, body string) {
+	if s.deps.Replier == nil || body == "" {
+		return
+	}
+	if groupID == "" && to == "" {
 		return
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), replyTimeout)
 	defer cancel()
 
-	if err := s.deps.Replier.SendText(ctx, to, body); err != nil {
-		s.logger.Error("sending whatsapp reply", "to", to, "error", err)
+	dest := to
+	var err error
+	if groupID != "" {
+		dest = groupID
+		err = s.deps.Replier.SendGroupText(ctx, groupID, body)
+	} else {
+		err = s.deps.Replier.SendText(ctx, to, body)
+	}
+
+	switch {
+	case errors.Is(err, whatsapp.ErrOutsideWindow):
+		s.logger.Warn("whatsapp reply dropped: recipient's 24h window is closed",
+			"to", dest, "hint", "recipient must message the bot to reopen it")
+		return
+	case err != nil:
+		s.logger.Error("sending whatsapp reply",
+			"to", dest, "group", groupID != "", "error", err)
 		return
 	}
-	s.logger.Info("whatsapp reply sent", "to", to, "body_bytes", len(body))
+	s.logger.Info("whatsapp reply sent",
+		"to", dest, "group", groupID != "", "body_bytes", len(body))
 }
 
 func formatReceiptReply(r model.Receipt) string {

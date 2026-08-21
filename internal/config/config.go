@@ -36,6 +36,8 @@ type Config struct {
 	WhatsAppTimeout       time.Duration
 	MediaMaxBytes         int64
 
+	RelayNumbers []string
+
 	TesseractBin  string
 	TesseractLang string
 	OCRTimeout    time.Duration
@@ -58,7 +60,7 @@ func Load() (Config, error) {
 
 	cfg := Config{
 		Env:  getString("APP_ENV", "development"),
-		Addr: getString("APP_ADDR", ":8080"),
+		Addr: listenAddr(),
 
 		MongoURI:      getString("ATLAS", ""),
 		MongoDatabase: getString("MONGO_DB", "go_ocr"),
@@ -72,6 +74,8 @@ func Load() (Config, error) {
 		WhatsAppAppSecret:   getString("WHATSAPP_APP_SECRET", ""),
 
 		WhatsAppPhoneNumberID: getString("WHATSAPP_PHONE_NUMBER_ID", ""),
+
+		RelayNumbers: getStringSlice("WHATSAPP_RELAY_NUMBERS"),
 
 		TesseractBin:  getString("TESSERACT_BIN", "tesseract"),
 		TesseractLang: getString("TESSERACT_LANG", "eng"),
@@ -145,11 +149,40 @@ func (c Config) MongoURISafe() string {
 	return u.Redacted()
 }
 
+// listenAddr prefers APP_ADDR, then PORT, which Cloud Run injects.
+func listenAddr() string {
+	if addr := getString("APP_ADDR", ""); addr != "" {
+		return addr
+	}
+	if port := getString("PORT", ""); port != "" {
+		return ":" + port
+	}
+	return ":8080"
+}
+
 func getString(key, fallback string) string {
 	if v, ok := os.LookupEnv(key); ok && v != "" {
 		return v
 	}
 	return fallback
+}
+
+// getStringSlice reads a comma-separated list, skipping blanks.
+func getStringSlice(key string) []string {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return nil
+	}
+
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+
+	return out
 }
 
 func getDuration(key string, fallback time.Duration) (time.Duration, error) {
