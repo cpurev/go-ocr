@@ -58,6 +58,8 @@ func run() error {
 		directory    api.StoreDirectory
 		lookup       receipt.StoreLookup
 	)
+	claims := store.MessageClaims(store.NewMemoryClaims(cfg.ClaimStaleAfter()))
+
 	if cfg.MongoURI != "" {
 		client, err := connectMongo(cfg)
 		if err != nil {
@@ -89,6 +91,8 @@ func run() error {
 
 		stores := store.NewMongoStores(db.Collection(cfg.MongoStores))
 
+		messageClaims := store.NewMongoClaims(db.Collection(cfg.MongoClaims), cfg.ClaimStaleAfter())
+
 		indexCtx, cancelIndex := context.WithTimeout(context.Background(), cfg.MongoTimeout)
 		defer cancelIndex()
 		if err := receipts.EnsureIndexes(indexCtx); err != nil {
@@ -97,11 +101,15 @@ func run() error {
 		if err := stores.EnsureIndexes(indexCtx); err != nil {
 			return err
 		}
+		if err := messageClaims.EnsureIndexes(indexCtx); err != nil {
+			return err
+		}
 
 		receiptStore = receipts
 		repo = receipts
 		directory = stores
 		lookup = stores
+		claims = messageClaims
 	} else {
 		logger.Warn("ATLAS is not set; receipts will not be persisted and /api/v1/receipts will return 503",
 			"hint", "add ATLAS=\"mongodb+srv://...\" to .env to enable storage")
@@ -148,6 +156,7 @@ func run() error {
 		Replier:  replier,
 		Stores:   directory,
 		Relay:    roster,
+		Claims:   claims,
 	})
 
 	httpServer := &http.Server{

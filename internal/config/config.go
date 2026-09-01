@@ -50,6 +50,8 @@ type Config struct {
 
 	MongoCounters string
 
+	MongoClaims string
+
 	StoreOverridesOCR bool
 }
 
@@ -67,6 +69,7 @@ func Load() (Config, error) {
 		MongoReceipts: getString("MONGO_RECEIPTS_COLLECTION", "receipts"),
 		MongoStores:   getString("MONGO_STORES_COLLECTION", "stores"),
 		MongoCounters: getString("MONGO_COUNTERS_COLLECTION", "counters"),
+		MongoClaims:   getString("MONGO_CLAIMS_COLLECTION", "claims"),
 
 		WhatsAppToken:       getString("WHATSAPP_TOKEN", ""),
 		WhatsAppAPIBase:     getString("WHATSAPP_API_BASE", "https://graph.facebook.com/v21.0"),
@@ -139,6 +142,13 @@ func Load() (Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// ClaimStaleAfter is how long an inbound message lease is honoured before a
+// retry may take it over. It has to exceed the inline work budget, or a slow
+// but healthy OCR loses its lease mid-flight and the human gets two replies.
+func (c Config) ClaimStaleAfter() time.Duration {
+	return 2 * (c.WhatsAppTimeout + c.OCRTimeout + c.MongoTimeout)
 }
 
 func (c Config) MongoURISafe() string {

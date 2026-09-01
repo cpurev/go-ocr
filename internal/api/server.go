@@ -27,6 +27,8 @@ type Deps struct {
 
 	// Relay is optional; nil keeps every conversation 1:1.
 	Relay *relay.Roster
+
+	Claims store.MessageClaims
 }
 
 type StoreDirectory interface {
