@@ -77,6 +77,16 @@ func (r *Roster) Has(number string) bool {
 	return false
 }
 
+// Allows reports whether the bot should act on a message from number. An empty
+// roster means the relay was never configured, so the bot is in single-user
+// mode and answers anyone; a configured roster is an allowlist.
+func (r *Roster) Allows(number string) bool {
+	if r.Size() == 0 {
+		return true
+	}
+	return r.Has(number)
+}
+
 // Others returns every roster member except sender. A sender that is not on the
 // roster gets nobody, so an unknown number cannot fan messages out.
 func (r *Roster) Others(sender string) []string {

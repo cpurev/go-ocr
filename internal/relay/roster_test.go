@@ -94,6 +94,32 @@ func TestHasMatchesAcrossFormats(t *testing.T) {
 	}
 }
 
+func TestAllows(t *testing.T) {
+	tests := []struct {
+		name    string
+		numbers []string
+		in      string
+		want    bool
+	}{
+		{"empty roster answers anyone", nil, "97600000000", true},
+		{"empty roster answers a different anyone", nil, "97644444444", true},
+		{"single member allowed", []string{"+97611111111"}, "97611111111", true},
+		{"single member rejects everyone else", []string{"+97611111111"}, "97622222222", false},
+		{"first of two allowed", []string{"+97611111111", "+97622222222"}, "97611111111", true},
+		{"second of two allowed", []string{"+97611111111", "+97622222222"}, "97622222222", true},
+		{"stranger rejected", []string{"+97611111111", "+97622222222"}, "97699999999", false},
+		{"configured bare, delivered with plus and spaces", []string{"97611111111"}, "+976 1111 1111", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := New(tt.numbers).Allows(tt.in); got != tt.want {
+				t.Errorf("New(%v).Allows(%q) = %v, want %v", tt.numbers, tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestOthers(t *testing.T) {
 	r := New([]string{"+97611111111", "+97622222222", "+97633333333"})
 
@@ -143,6 +169,9 @@ func TestNilRosterIsSafe(t *testing.T) {
 	}
 	if r.Has("97611111111") {
 		t.Error("nil Has() = true, want false")
+	}
+	if !r.Allows("97611111111") {
+		t.Error("nil Allows() = false, want true")
 	}
 	if got := r.Others("97611111111"); got != nil {
 		t.Errorf("nil Others() = %v, want nil", got)

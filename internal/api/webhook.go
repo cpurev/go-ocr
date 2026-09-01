@@ -74,18 +74,35 @@ func (s *Server) handleWebhookReceive(w http.ResponseWriter, r *http.Request) {
 	// so retries are the normal path and handleOnce turns them into no-ops.
 	images := n.Images()
 	for _, img := range images {
+		if !s.allowed(img.From) {
+			continue
+		}
 		s.handleOnce(r.Context(), img.MessageID, func(ctx context.Context) Reply {
 			return s.replyToImage(ctx, img)
 		})
 	}
 
 	for _, txt := range n.Texts() {
+		if !s.allowed(txt.From) {
+			continue
+		}
 		s.handleOnce(r.Context(), txt.MessageID, func(ctx context.Context) Reply {
 			return s.replyToText(ctx, txt)
 		})
 	}
 
 	httpx.OK(w, http.StatusOK, map[string]int{"images_accepted": len(images)}, nil)
+}
+
+// allowed drops messages from numbers outside a configured relay. The drop is
+// silent because replying would tell a stranger the number is a live bot.
+func (s *Server) allowed(from string) bool {
+	if s.deps.Relay.Allows(from) {
+		return true
+	}
+	s.logger.Info("ignoring message from a number outside the relay",
+		"from", relay.Normalize(from))
+	return false
 }
 
 func (s *Server) replyToImage(ctx context.Context, img whatsapp.InboundImage) Reply {
