@@ -47,7 +47,7 @@ var verbs = []verb{
 		Parse: parseLast, Run: (*Server).lastReply},
 
 	{Name: "edit", Needs: needsReceipts, Audience: audienceEveryone,
-		Usage: "edit 7 merchant: ICA",
+		Usage: "edit 7 merchant: ICA, or edit total: 154.53 for the newest",
 		Parse: parseEdit, Run: (*Server).editReply},
 }
 

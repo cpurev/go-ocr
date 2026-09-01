@@ -71,6 +71,11 @@ func TestParseCommand(t *testing.T) {
 		{text: "edit 7 merchant: Willys, currency: SEK", verb: "edit", number: 7,
 			update: model.ReceiptUpdate{Merchant: ptr("Willys"), Currency: ptr("SEK")}},
 
+		{text: "edit merchant: ICA", verb: "edit",
+			update: model.ReceiptUpdate{Merchant: ptr("ICA")}},
+		{text: "edit total: 154.53", verb: "edit",
+			update: model.ReceiptUpdate{Total: ptr(154.53)}},
+
 		{text: "edit 0 merchant: ICA", verb: "edit", errSet: true},
 		{text: "edit 7", verb: "edit", number: 7, errSet: true},
 

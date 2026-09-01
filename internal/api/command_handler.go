@@ -123,12 +123,28 @@ func formatReceiptLine(r model.Receipt) string {
 }
 
 func (s *Server) editReply(ctx context.Context, req request) string {
-	existing, err := s.deps.Receipts.GetReceiptByNumber(ctx, req.Cmd.Number)
+	number := req.Cmd.Number
+	if number == 0 {
+		// Newest overall rather than newest from the asking phone: the relay
+		// points both phones at one shared stream, and `edit 7` already reaches
+		// across it because GetReceiptByNumber has no user filter.
+		recent, err := s.deps.Receipts.ListRecentReceipts(ctx, 1)
+		if err != nil {
+			s.logger.Error("finding the newest receipt to edit", "error", err)
+			return "Something went wrong finding that receipt. Please try again."
+		}
+		if len(recent) == 0 {
+			return "I don't have any receipts yet."
+		}
+		number = recent[0].Number
+	}
+
+	existing, err := s.deps.Receipts.GetReceiptByNumber(ctx, number)
 	if errors.Is(err, store.ErrNotFound) {
-		return fmt.Sprintf("I don't have a receipt #%d.", req.Cmd.Number)
+		return fmt.Sprintf("I don't have a receipt #%d.", number)
 	}
 	if err != nil {
-		s.logger.Error("looking up receipt for edit", "number", req.Cmd.Number, "error", err)
+		s.logger.Error("looking up receipt for edit", "number", number, "error", err)
 		return "Something went wrong finding that receipt. Please try again."
 	}
 
@@ -143,10 +159,10 @@ func (s *Server) editReply(ctx context.Context, req request) string {
 
 	updated, err := s.deps.Receipts.UpdateReceipt(ctx, existing.ID, req.Cmd.Update)
 	if errors.Is(err, store.ErrNotFound) {
-		return fmt.Sprintf("I don't have a receipt #%d.", req.Cmd.Number)
+		return fmt.Sprintf("I don't have a receipt #%d.", number)
 	}
 	if err != nil {
-		s.logger.Error("updating receipt", "number", req.Cmd.Number, "error", err)
+		s.logger.Error("updating receipt", "number", number, "error", err)
 		return "Something went wrong saving that edit. Please try again."
 	}
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/cpurev/go-ocr/internal/config"
@@ -128,6 +129,85 @@ func TestLastReply(t *testing.T) {
 				request{Sender: alice, Cmd: Command{Limit: defaultRecent}})
 			if got != tt.want {
 				t.Errorf("last replied %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestEditWithNoNumberTargetsTheNewestByInsertionOrder(t *testing.T) {
+	newest := model.Receipt{ID: "a1", Number: 48, Merchant: "ICA",
+		Total: 154.53, Currency: "SEK", Date: "2026-01-02"}
+	older := model.Receipt{ID: "b2", Number: 47, Merchant: "Willys",
+		Total: 89, Currency: "SEK", Date: "2026-08-04"}
+
+	var askedLimit, askedNumber int
+	receipts := &fakeReceipts{
+		listRecentReceipts: func(_ context.Context, limit int) ([]model.Receipt, error) {
+			askedLimit = limit
+			return []model.Receipt{newest, older}, nil
+		},
+		getReceiptByNumber: func(_ context.Context, number int) (model.Receipt, error) {
+			askedNumber = number
+			return newest, nil
+		},
+		updateReceipt: func(_ context.Context, _ string, update model.ReceiptUpdate) (model.Receipt, error) {
+			edited := newest
+			edited.Merchant = *update.Merchant
+			return edited, nil
+		},
+	}
+	srv := newCommandServer(t, nil, receipts)
+
+	body := srv.editReply(context.Background(), request{Sender: alice,
+		Cmd: Command{Update: model.ReceiptUpdate{Merchant: ptr("Coop")}}})
+
+	if askedLimit != 1 {
+		t.Errorf("edit asked the store for %d recent receipts, want 1", askedLimit)
+	}
+	if askedNumber != newest.Number {
+		t.Errorf("edit with no number reached receipt #%d, want #%d: the newest receipt is the "+
+			"last one inserted, not the one with the newest printed date", askedNumber, newest.Number)
+	}
+	if want := "*Receipt #48 updated*"; !strings.Contains(body, want) {
+		t.Errorf("edit replied %q, want it to contain %q", body, want)
+	}
+}
+
+func TestEditWithNoNumberWhenThereIsNothingToTarget(t *testing.T) {
+	tests := []struct {
+		name   string
+		recent []model.Receipt
+		err    error
+		want   string
+	}{
+		{
+			name: "nothing stored yet",
+			want: "I don't have any receipts yet.",
+		},
+		{
+			name: "store outage",
+			err:  errors.New("mongo is unreachable"),
+			want: "Something went wrong finding that receipt. Please try again.",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			receipts := &fakeReceipts{
+				listRecentReceipts: func(_ context.Context, _ int) ([]model.Receipt, error) {
+					return tt.recent, tt.err
+				},
+				getReceiptByNumber: func(_ context.Context, number int) (model.Receipt, error) {
+					t.Fatalf("edit looked up receipt #%d, want no lookup at all", number)
+					return model.Receipt{}, nil
+				},
+			}
+			srv := newCommandServer(t, nil, receipts)
+
+			got := srv.editReply(context.Background(), request{Sender: alice,
+				Cmd: Command{Update: model.ReceiptUpdate{Merchant: ptr("Coop")}}})
+			if got != tt.want {
+				t.Errorf("edit replied %q, want %q", got, tt.want)
 			}
 		})
 	}

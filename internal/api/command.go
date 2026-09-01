@@ -82,17 +82,17 @@ func parseLast(args string) Command {
 }
 
 func parseEdit(args string) Command {
-	m := editNumberRe.FindStringSubmatchIndex(args)
-	if m == nil {
-		return Command{Err: errors.New("which receipt? name its number")}
+	number, tail := 0, args
+
+	if m := editNumberRe.FindStringSubmatchIndex(args); m != nil {
+		n, err := strconv.Atoi(args[m[2]:m[3]])
+		if err != nil || n <= 0 {
+			return Command{Err: errors.New("receipt number must be a positive number")}
+		}
+		number, tail = n, args[m[1]:]
 	}
 
-	number, err := strconv.Atoi(args[m[2]:m[3]])
-	if err != nil || number <= 0 {
-		return Command{Err: errors.New("receipt number must be a positive number")}
-	}
-
-	update, err := parseFields(args[m[1]:])
+	update, err := parseFields(tail)
 	if err != nil {
 		return Command{Number: number, Err: err}
 	}
