@@ -29,6 +29,13 @@ var (
 
 	fieldRe = regexp.MustCompile(
 		`(?i)\b(merchant|shop|store|total|sum|subtotal|tax|vat|moms|currency|date)\b\s*[:=]?\s*`)
+
+	// fieldAssignRe decides whether edit was meant at all, where fieldRe only
+	// reads the fields once that is settled. The separator is what separates
+	// them: without it "edit my store list" would set merchant to "list" on the
+	// newest receipt, tell both phones, and teach the store directory that name.
+	fieldAssignRe = regexp.MustCompile(
+		`(?i)\b(merchant|shop|store|total|sum|subtotal|tax|vat|moms|currency|date)\b\s*[:=]`)
 )
 
 // parseCommand matches the leading word against the verb table. The word alone
@@ -106,7 +113,7 @@ func parseLast(args string, _ time.Time) (Command, bool) {
 
 func parseEdit(args string, _ time.Time) (Command, bool) {
 	m := editNumberRe.FindStringSubmatchIndex(args)
-	if m == nil && !fieldRe.MatchString(args) {
+	if m == nil && !fieldAssignRe.MatchString(args) {
 		return Command{}, false
 	}
 

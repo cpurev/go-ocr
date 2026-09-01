@@ -123,10 +123,16 @@ var parseCommandTests = []parseCommandCase{
 		wantErr: `total "abc" is not a number`},
 	{text: "edit"},
 	{text: "edit the shopping list"},
-	// fieldRe reads a bare field noun anywhere in the args, so these two are
-	// commands today. They are the widest the matcher still opens.
-	{text: "edit my store list", verb: "edit",
-		update: model.ReceiptUpdate{Merchant: ptr("list")}},
+	// A field noun only means edit when it carries a separator, so these relay.
+	{text: "edit my store list"},
+	{text: "edit the date on the invoice"},
+	{text: "total up what we owe"},
+	// A separator, or a receipt number, settles that edit was meant. Once it is
+	// settled the field reader stays lenient, so this needs no colon.
+	{text: "edit merchant: ICA", verb: "edit",
+		update: model.ReceiptUpdate{Merchant: ptr("ICA")}},
+	{text: "edit 7 merchant ICA", verb: "edit", number: 7,
+		update: model.ReceiptUpdate{Merchant: ptr("ICA")}},
 	{text: "delete 3 messages", verb: "delete",
 		wantErr: "which receipt? name its number"},
 
