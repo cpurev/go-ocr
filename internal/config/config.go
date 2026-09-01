@@ -144,13 +144,6 @@ func Load() (Config, error) {
 	return cfg, nil
 }
 
-// ClaimStaleAfter is how long an inbound message lease is honoured before a
-// retry may take it over. It has to exceed the inline work budget, or a slow
-// but healthy OCR loses its lease mid-flight and the human gets two replies.
-func (c Config) ClaimStaleAfter() time.Duration {
-	return 2 * (c.WhatsAppTimeout + c.OCRTimeout + c.MongoTimeout)
-}
-
 func (c Config) MongoURISafe() string {
 	u, err := url.Parse(c.MongoURI)
 	if err != nil {

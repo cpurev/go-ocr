@@ -58,7 +58,7 @@ func run() error {
 		directory    api.StoreDirectory
 		lookup       receipt.StoreLookup
 	)
-	claims := store.MessageClaims(store.NewMemoryClaims(cfg.ClaimStaleAfter()))
+	claims := store.MessageClaims(store.NewMemoryClaims(store.ClaimLease))
 
 	if cfg.MongoURI != "" {
 		client, err := connectMongo(cfg)
@@ -91,7 +91,7 @@ func run() error {
 
 		stores := store.NewMongoStores(db.Collection(cfg.MongoStores))
 
-		messageClaims := store.NewMongoClaims(db.Collection(cfg.MongoClaims), cfg.ClaimStaleAfter())
+		messageClaims := store.NewMongoClaims(db.Collection(cfg.MongoClaims), store.ClaimLease)
 
 		indexCtx, cancelIndex := context.WithTimeout(context.Background(), cfg.MongoTimeout)
 		defer cancelIndex()

@@ -51,7 +51,7 @@ func NewServer(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 	// Resolved once here so no handler ever has to branch on a missing claim
 	// store, which is the branch that would put the duplicate reply back.
 	if deps.Claims == nil {
-		deps.Claims = store.NewMemoryClaims(cfg.ClaimStaleAfter())
+		deps.Claims = store.NewMemoryClaims(store.ClaimLease)
 	}
 
 	return &Server{

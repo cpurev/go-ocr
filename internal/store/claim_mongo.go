@@ -28,7 +28,7 @@ var _ MessageClaims = (*MongoClaims)(nil)
 // taken over mid-flight and the human gets two replies.
 func NewMongoClaims(coll *mongo.Collection, staleAfter time.Duration) *MongoClaims {
 	if staleAfter <= 0 {
-		staleAfter = defaultStaleAfter
+		staleAfter = ClaimLease
 	}
 	return &MongoClaims{coll: coll, staleAfter: staleAfter}
 }

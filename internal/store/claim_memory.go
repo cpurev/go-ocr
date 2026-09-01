@@ -32,7 +32,7 @@ var _ MessageClaims = (*MemoryClaims)(nil)
 
 func NewMemoryClaims(staleAfter time.Duration) *MemoryClaims {
 	if staleAfter <= 0 {
-		staleAfter = defaultStaleAfter
+		staleAfter = ClaimLease
 	}
 	return &MemoryClaims{
 		staleAfter: staleAfter,

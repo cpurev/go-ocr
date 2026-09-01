@@ -20,9 +20,8 @@ type fakeReplier struct {
 }
 
 type sentMessage struct {
-	to    string
-	body  string
-	group bool
+	to   string
+	body string
 }
 
 func (f *fakeReplier) SendText(_ context.Context, to, body string) error {
@@ -116,7 +115,7 @@ func TestNoRosterCollapsesToDirectReply(t *testing.T) {
 	if got := len(rep.sent); got != 1 {
 		t.Fatalf("sent %d messages, want 1: %v", got, rep.recipients())
 	}
-	if rep.sent[0].to != alice || rep.sent[0].group {
+	if rep.sent[0].to != alice {
 		t.Errorf("got %+v, want a plain 1:1 reply to %s", rep.sent[0], alice)
 	}
 }

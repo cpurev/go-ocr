@@ -12,8 +12,12 @@ var ErrClaimed = errors.New("store: message already claimed")
 // outlive Meta's webhook retry schedule.
 const ClaimTTL = 48 * time.Hour
 
-// defaultStaleAfter is the lease length used when the caller does not set one.
-const defaultStaleAfter = 3 * time.Minute
+// ClaimLease is how long one delivery may hold a message id before another
+// may take it over. It must exceed the slowest possible inline handling, which
+// is the ingest budget plus one send timeout per roster member, and erring long
+// is nearly free: an overlong lease only delays redoing a message whose handler
+// died, and Meta retries for hours. Erring short reinstates the double reply.
+const ClaimLease = 10 * time.Minute
 
 // MessageClaims records which inbound WhatsApp message ids this service has
 // handled, so a redelivered webhook does no work and sends no reply.
