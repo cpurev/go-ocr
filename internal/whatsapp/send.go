@@ -14,10 +14,7 @@ import (
 
 const maxTextBody = 4096
 
-const (
-	recipientIndividual = "individual"
-	recipientGroup      = "group"
-)
+const recipientIndividual = "individual"
 
 // Meta's code for a recipient who has not messaged the business in 24 hours.
 const errCodeReEngagement = 131047
@@ -78,15 +75,6 @@ type textPayload struct {
 
 // SendText sends a 1:1 message to a phone number.
 func (s *Sender) SendText(ctx context.Context, to, body string) error {
-	return s.sendText(ctx, recipientIndividual, to, body)
-}
-
-// SendGroupText sends a message to a group, using the group_id from the webhook.
-func (s *Sender) SendGroupText(ctx context.Context, groupID, body string) error {
-	return s.sendText(ctx, recipientGroup, groupID, body)
-}
-
-func (s *Sender) sendText(ctx context.Context, recipientType, to, body string) error {
 	if strings.TrimSpace(to) == "" {
 		return fmt.Errorf("whatsapp: empty recipient")
 	}
@@ -103,7 +91,7 @@ func (s *Sender) sendText(ctx context.Context, recipientType, to, body string) e
 
 	payload, err := json.Marshal(textMessage{
 		MessagingProduct: "whatsapp",
-		RecipientType:    recipientType,
+		RecipientType:    recipientIndividual,
 		To:               to,
 		Type:             "text",
 		Text:             textPayload{PreviewURL: false, Body: body},

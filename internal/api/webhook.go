@@ -101,7 +101,6 @@ func (s *Server) ingestInboundImage(ctx context.Context, img whatsapp.InboundIma
 	created, err := s.deps.Ingester.Ingest(ctx, model.ReceiptInput{
 		WhatsAppMediaID: img.MediaID,
 		UserID:          img.From,
-		GroupID:         img.GroupID,
 	})
 
 	var reply string
@@ -138,22 +137,22 @@ func (s *Server) ingestInboundImage(ctx context.Context, img whatsapp.InboundIma
 		reply = formatReceiptReply(created)
 	}
 
-	s.broadcast(img.From, img.GroupID, reply)
+	s.broadcast(img.From, reply)
 }
 
 const replyTimeout = 15 * time.Second
 
 // broadcast sends body to the sender as written and to everyone else on the
 // roster with attribution. Off-roster senders get a plain 1:1 reply.
-func (s *Server) broadcast(sender, groupID, body string) {
+func (s *Server) broadcast(sender, body string) {
 	if body == "" {
 		return
 	}
 
-	s.replyTo(sender, groupID, body)
+	s.replyTo(sender, body)
 
 	for _, other := range s.deps.Relay.Others(sender) {
-		s.replyTo(other, "", attribute(sender, body))
+		s.replyTo(other, attribute(sender, body))
 	}
 }
 
@@ -164,7 +163,7 @@ func (s *Server) forward(sender, body string) {
 	}
 
 	for _, other := range s.deps.Relay.Others(sender) {
-		s.replyTo(other, "", attribute(sender, body))
+		s.replyTo(other, attribute(sender, body))
 	}
 }
 
@@ -173,39 +172,25 @@ func attribute(sender, body string) string {
 	return "From +" + relay.Normalize(sender) + ":\n\n" + body
 }
 
-// replyTo answers the group when groupID is set, otherwise the sender.
-func (s *Server) replyTo(to, groupID, body string) {
-	if s.deps.Replier == nil || body == "" {
-		return
-	}
-	if groupID == "" && to == "" {
+func (s *Server) replyTo(to, body string) {
+	if s.deps.Replier == nil || body == "" || to == "" {
 		return
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), replyTimeout)
 	defer cancel()
 
-	dest := to
-	var err error
-	if groupID != "" {
-		dest = groupID
-		err = s.deps.Replier.SendGroupText(ctx, groupID, body)
-	} else {
-		err = s.deps.Replier.SendText(ctx, to, body)
-	}
-
+	err := s.deps.Replier.SendText(ctx, to, body)
 	switch {
 	case errors.Is(err, whatsapp.ErrOutsideWindow):
 		s.logger.Warn("whatsapp reply dropped: recipient's 24h window is closed",
-			"to", dest, "hint", "recipient must message the bot to reopen it")
+			"to", to, "hint", "recipient must message the bot to reopen it")
 		return
 	case err != nil:
-		s.logger.Error("sending whatsapp reply",
-			"to", dest, "group", groupID != "", "error", err)
+		s.logger.Error("sending whatsapp reply", "to", to, "error", err)
 		return
 	}
-	s.logger.Info("whatsapp reply sent",
-		"to", dest, "group", groupID != "", "body_bytes", len(body))
+	s.logger.Info("whatsapp reply sent", "to", to, "body_bytes", len(body))
 }
 
 func formatReceiptReply(r model.Receipt) string {

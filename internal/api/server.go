@@ -36,7 +36,6 @@ type StoreDirectory interface {
 
 type Replier interface {
 	SendText(ctx context.Context, to, body string) error
-	SendGroupText(ctx context.Context, groupID, body string) error
 }
 
 type Server struct {

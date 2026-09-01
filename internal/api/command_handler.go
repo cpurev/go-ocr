@@ -45,7 +45,7 @@ func (s *Server) handleTextCommand(ctx context.Context, txt whatsapp.InboundText
 		reply = s.editReceiptReply(ctx, cmd)
 	}
 
-	s.broadcast(txt.From, txt.GroupID, reply)
+	s.broadcast(txt.From, reply)
 }
 
 func (s *Server) editReceiptReply(ctx context.Context, cmd Command) string {

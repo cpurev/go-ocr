@@ -42,8 +42,6 @@ type Message struct {
 	Type      string        `json:"type"`
 	Image     *MediaContent `json:"image"`
 	Text      *TextContent  `json:"text"`
-
-	GroupID string `json:"group_id"`
 }
 
 type MediaContent struct {
@@ -60,14 +58,12 @@ type TextContent struct {
 type InboundImage struct {
 	MediaID   string
 	From      string
-	GroupID   string
 	MessageID string
 	Caption   string
 }
 
 type InboundText struct {
 	From      string
-	GroupID   string
 	MessageID string
 	Body      string
 }
@@ -83,7 +79,6 @@ func (n Notification) Images() []InboundImage {
 				images = append(images, InboundImage{
 					MediaID:   msg.Image.ID,
 					From:      msg.From,
-					GroupID:   msg.GroupID,
 					MessageID: msg.ID,
 					Caption:   msg.Image.Caption,
 				})
@@ -103,7 +98,6 @@ func (n Notification) Texts() []InboundText {
 				}
 				texts = append(texts, InboundText{
 					From:      msg.From,
-					GroupID:   msg.GroupID,
 					MessageID: msg.ID,
 					Body:      msg.Text.Body,
 				})
