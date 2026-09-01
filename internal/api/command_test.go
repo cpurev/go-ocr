@@ -42,6 +42,7 @@ func TestParseCommand(t *testing.T) {
 		text   string
 		verb   string
 		number int
+		limit  int
 		update model.ReceiptUpdate
 		errSet bool
 	}{
@@ -50,9 +51,16 @@ func TestParseCommand(t *testing.T) {
 		{text: "commands", verb: "help"},
 		{text: "HELP", verb: "help"},
 
+		{text: "who", verb: "who"},
+		{text: "relay", verb: "who"},
+
 		{text: "  stores  ", verb: "stores"},
 		{text: "shops", verb: "stores"},
 		{text: "merchants", verb: "stores"},
+
+		{text: "last", verb: "last", limit: defaultRecent},
+		{text: "recent", verb: "last", limit: defaultRecent},
+		{text: "last 7", verb: "last", limit: 7},
 
 		{text: "edit 7 merchant: ICA", verb: "edit", number: 7,
 			update: model.ReceiptUpdate{Merchant: ptr("ICA")}},
@@ -93,6 +101,9 @@ func TestParseCommand(t *testing.T) {
 			}
 			if cmd.Number != tt.number {
 				t.Errorf("%q parsed receipt number %d, want %d", tt.text, cmd.Number, tt.number)
+			}
+			if cmd.Limit != tt.limit {
+				t.Errorf("%q parsed limit %d, want %d", tt.text, cmd.Limit, tt.limit)
 			}
 			if got, want := showUpdate(cmd.Update), showUpdate(tt.update); got != want {
 				t.Errorf("%q parsed update %s, want %s", tt.text, got, want)
@@ -141,5 +152,38 @@ func TestHelpTextDocumentsEveryVerb(t *testing.T) {
 		if !strings.Contains(helpText, v.Usage) {
 			t.Errorf("help text has no line for the %q verb, want it to contain %q", v.Name, v.Usage)
 		}
+	}
+}
+
+func TestParseLast(t *testing.T) {
+	tests := []struct {
+		args   string
+		limit  int
+		errSet bool
+	}{
+		{args: "", limit: defaultRecent},
+		{args: "5", limit: 5},
+		{args: "  5  ", limit: 5},
+		{args: "1", limit: 1},
+		{args: "20", limit: maxRecent},
+		{args: "21", limit: maxRecent},
+		{args: "999", limit: maxRecent},
+		{args: "0", errSet: true},
+		{args: "-1", errSet: true},
+		{args: "five", errSet: true},
+		{args: "5 receipts", errSet: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("%q", tt.args), func(t *testing.T) {
+			cmd := parseLast(tt.args)
+
+			if (cmd.Err != nil) != tt.errSet {
+				t.Fatalf("parseLast(%q) gave err %v, want an error: %v", tt.args, cmd.Err, tt.errSet)
+			}
+			if cmd.Limit != tt.limit {
+				t.Errorf("parseLast(%q) asks for %d receipts, want %d", tt.args, cmd.Limit, tt.limit)
+			}
+		})
 	}
 }

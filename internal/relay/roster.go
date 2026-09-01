@@ -104,3 +104,15 @@ func (r *Roster) Others(sender string) []string {
 
 	return out
 }
+
+// Members returns the roster numbers in configuration order.
+func (r *Roster) Members() []string {
+	if r == nil {
+		return nil
+	}
+
+	out := make([]string, len(r.numbers))
+	copy(out, r.numbers)
+
+	return out
+}

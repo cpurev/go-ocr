@@ -279,6 +279,38 @@ func (m *MongoReceipts) ListReceipts(ctx context.Context, f ReceiptFilter) ([]mo
 	return receipts, total, nil
 }
 
+func (m *MongoReceipts) ListRecentReceipts(ctx context.Context, limit int) ([]model.Receipt, error) {
+	switch {
+	case limit < 1:
+		limit = 1
+	case limit > MaxReceiptLimit:
+		limit = MaxReceiptLimit
+	}
+
+	// _id descending is insertion order and rides the primary key, so this needs
+	// no index of its own. Sorting on date would put an old shop trip
+	// photographed today behind receipts that arrived before it.
+	cursor, err := m.coll.Find(ctx, bson.D{}, options.Find().
+		SetSort(bson.D{{Key: "_id", Value: -1}}).
+		SetLimit(int64(limit)))
+	if err != nil {
+		return nil, fmt.Errorf("mongo: listing recent receipts: %w", err)
+	}
+	defer cursor.Close(ctx)
+
+	var docs []receiptDocument
+	if err := cursor.All(ctx, &docs); err != nil {
+		return nil, fmt.Errorf("mongo: decoding recent receipts: %w", err)
+	}
+
+	receipts := make([]model.Receipt, 0, len(docs))
+	for _, doc := range docs {
+		receipts = append(receipts, doc.toModel())
+	}
+
+	return receipts, nil
+}
+
 func buildReceiptQuery(f ReceiptFilter) bson.D {
 	query := bson.D{}
 

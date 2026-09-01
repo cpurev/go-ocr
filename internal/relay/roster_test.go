@@ -158,6 +158,21 @@ func TestOthers(t *testing.T) {
 	}
 }
 
+func TestMembersHandsOutACopyInConfigurationOrder(t *testing.T) {
+	r := New([]string{"+97622222222", "+976 1111-1111", "97611111111", "nonsense"})
+	want := []string{"97622222222", "97611111111"}
+
+	got := r.Members()
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Members() = %v, want %v in configuration order with duplicates and junk dropped", got, want)
+	}
+
+	got[0] = "97600000000"
+	if again := r.Members(); !reflect.DeepEqual(again, want) {
+		t.Errorf("Members() = %v after a caller wrote to an earlier result, want %v", again, want)
+	}
+}
+
 func TestNilRosterIsSafe(t *testing.T) {
 	var r *Roster
 
@@ -175,5 +190,8 @@ func TestNilRosterIsSafe(t *testing.T) {
 	}
 	if got := r.Others("97611111111"); got != nil {
 		t.Errorf("nil Others() = %v, want nil", got)
+	}
+	if got := r.Members(); got != nil {
+		t.Errorf("nil Members() = %v, want nil", got)
 	}
 }

@@ -84,6 +84,10 @@ type ReceiptStore interface {
 
 	GetReceiptByNumber(ctx context.Context, number int) (model.Receipt, error)
 
+	// ListRecentReceipts returns the newest receipts by insertion order, not by
+	// the date printed on them.
+	ListRecentReceipts(ctx context.Context, limit int) ([]model.Receipt, error)
+
 	UpdateReceipt(ctx context.Context, id string, update model.ReceiptUpdate) (model.Receipt, error)
 }
 

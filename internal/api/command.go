@@ -13,6 +13,8 @@ import (
 type Command struct {
 	Number int
 
+	Limit int
+
 	Update model.ReceiptUpdate
 
 	Err error
@@ -56,6 +58,28 @@ func isLetter(b byte) bool {
 }
 
 func noArgs(string) Command { return Command{} }
+
+const (
+	defaultRecent = 5
+	maxRecent     = 20
+)
+
+func parseLast(args string) Command {
+	args = strings.TrimSpace(args)
+	if args == "" {
+		return Command{Limit: defaultRecent}
+	}
+
+	howMany, err := strconv.Atoi(args)
+	if err != nil || howMany < 1 {
+		return Command{Err: errors.New("how many? try: last 5")}
+	}
+	if howMany > maxRecent {
+		howMany = maxRecent
+	}
+
+	return Command{Limit: howMany}
+}
 
 func parseEdit(args string) Command {
 	m := editNumberRe.FindStringSubmatchIndex(args)

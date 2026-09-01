@@ -33,10 +33,18 @@ var verbs = []verb{
 		Usage: "help, what I understand",
 		Parse: noArgs, Run: (*Server).helpReply},
 
+	{Name: "who", Aliases: []string{"relay"}, Audience: audienceSender,
+		Usage: "who, who is on the relay",
+		Parse: noArgs, Run: (*Server).whoReply},
+
 	{Name: "stores", Aliases: []string{"shops", "merchants"}, Needs: needsStores,
 		Audience: audienceEveryone,
 		Usage:    "stores, shops I have learned",
 		Parse:    noArgs, Run: (*Server).storesReply},
+
+	{Name: "last", Aliases: []string{"recent"}, Needs: needsReceipts, Audience: audienceSender,
+		Usage: "last, last 5",
+		Parse: parseLast, Run: (*Server).lastReply},
 
 	{Name: "edit", Needs: needsReceipts, Audience: audienceEveryone,
 		Usage: "edit 7 merchant: ICA",

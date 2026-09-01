@@ -65,6 +65,63 @@ func (s *Server) missing(n need) string {
 
 func (s *Server) helpReply(ctx context.Context, req request) string { return helpText }
 
+func (s *Server) whoReply(ctx context.Context, req request) string {
+	members := s.deps.Relay.Members()
+	if len(members) == 0 {
+		return "The relay isn't set up, so it's just you and me."
+	}
+
+	var b strings.Builder
+	b.WriteString("*On the relay*\n\n")
+	for _, number := range members {
+		b.WriteString("+" + number)
+		if number == req.Sender {
+			b.WriteString(" (you)")
+		}
+		b.WriteString("\n")
+	}
+
+	return b.String()
+}
+
+func (s *Server) lastReply(ctx context.Context, req request) string {
+	receipts, err := s.deps.Receipts.ListRecentReceipts(ctx, req.Cmd.Limit)
+	if err != nil {
+		s.logger.Error("listing recent receipts", "limit", req.Cmd.Limit, "error", err)
+		return "Something went wrong reading your receipts. Please try again."
+	}
+	if len(receipts) == 0 {
+		return "I don't have any receipts yet."
+	}
+
+	var b strings.Builder
+	if len(receipts) == 1 {
+		b.WriteString("*Last receipt*\n\n")
+	} else {
+		fmt.Fprintf(&b, "*Last %d receipts*\n\n", len(receipts))
+	}
+	for _, r := range receipts {
+		b.WriteString(formatReceiptLine(r))
+		b.WriteString("\n")
+	}
+
+	return b.String()
+}
+
+func formatReceiptLine(r model.Receipt) string {
+	merchant := r.Merchant
+	if merchant == "" {
+		merchant = "(no merchant)"
+	}
+
+	line := fmt.Sprintf("#%d %s, %.2f %s", r.Number, merchant, r.Total, r.Currency)
+	if r.Date == "" {
+		return line
+	}
+
+	return line + ", " + r.Date
+}
+
 func (s *Server) editReply(ctx context.Context, req request) string {
 	existing, err := s.deps.Receipts.GetReceiptByNumber(ctx, req.Cmd.Number)
 	if errors.Is(err, store.ErrNotFound) {
