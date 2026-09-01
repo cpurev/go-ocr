@@ -70,27 +70,25 @@ func (s *Server) handleWebhookReceive(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Handled inline, not in goroutines: Cloud Run throttles CPU once the
-	// response is written. Retries are safe, whatsappMediaId is unique.
+	// response is written. That makes this slower than Meta's webhook timeout,
+	// so retries are the normal path and handleOnce turns them into no-ops.
 	images := n.Images()
 	for _, img := range images {
-		s.deliver(r.Context(), s.replyToImage(r.Context(), img))
+		s.handleOnce(r.Context(), img.MessageID, func(ctx context.Context) Reply {
+			return s.replyToImage(ctx, img)
+		})
 	}
 
 	for _, txt := range n.Texts() {
-		s.deliver(r.Context(), s.replyToText(r.Context(), txt))
+		s.handleOnce(r.Context(), txt.MessageID, func(ctx context.Context) Reply {
+			return s.replyToText(ctx, txt)
+		})
 	}
 
 	httpx.OK(w, http.StatusOK, map[string]int{"images_accepted": len(images)}, nil)
 }
 
 func (s *Server) replyToImage(ctx context.Context, img whatsapp.InboundImage) Reply {
-	defer func() {
-		if p := recover(); p != nil {
-			s.logger.Error("panic while ingesting webhook image",
-				"media_id", img.MediaID, "panic", p)
-		}
-	}()
-
 	budget := s.cfg.WhatsAppTimeout + s.cfg.OCRTimeout + s.cfg.MongoTimeout
 	if budget <= 0 {
 		budget = time.Minute

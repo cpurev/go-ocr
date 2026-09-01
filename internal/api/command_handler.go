@@ -17,13 +17,6 @@ import (
 const commandTimeout = 20 * time.Second
 
 func (s *Server) replyToText(ctx context.Context, txt whatsapp.InboundText) Reply {
-	defer func() {
-		if p := recover(); p != nil {
-			s.logger.Error("panic while handling text command",
-				"message_id", txt.MessageID, "panic", p)
-		}
-	}()
-
 	sender := relay.Normalize(txt.From)
 
 	cmd := ParseCommand(txt.Body)

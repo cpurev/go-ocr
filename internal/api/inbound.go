@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/cpurev/go-ocr/internal/relay"
+	"github.com/cpurev/go-ocr/internal/store"
 	"github.com/cpurev/go-ocr/internal/whatsapp"
 )
 
@@ -47,6 +48,68 @@ func relayOthers(sender, body string) Reply {
 
 // Silent reports a Reply that says nothing. The zero Reply is silent.
 func (r Reply) Silent() bool { return strings.TrimSpace(r.Body) == "" }
+
+// defaultClaimTimeout bounds the claim write when MONGO_TIMEOUT is unset.
+const defaultClaimTimeout = 10 * time.Second
+
+// handleOnce runs work at most once per WhatsApp message id and delivers what
+// it decided to say. Meta redelivers any webhook it did not get a fast 200 for,
+// and the image path cannot answer inside that window, so the claim is the only
+// thing between a retry and a second reply.
+func (s *Server) handleOnce(ctx context.Context, messageID string, work func(context.Context) Reply) {
+	defer func() {
+		if p := recover(); p != nil {
+			s.logger.Error("panic while handling inbound message",
+				"message_id", messageID, "panic", p)
+			if messageID != "" {
+				s.release(context.WithoutCancel(ctx), messageID)
+			}
+		}
+	}()
+
+	if messageID == "" {
+		s.deliver(ctx, work(ctx))
+		return
+	}
+
+	budget := s.cfg.MongoTimeout
+	if budget <= 0 {
+		budget = defaultClaimTimeout
+	}
+	claimCtx, cancel := context.WithTimeout(ctx, budget)
+	err := s.deps.Claims.Claim(claimCtx, messageID)
+	cancel()
+
+	switch {
+	case errors.Is(err, store.ErrClaimed):
+		s.logger.Info("webhook redelivery ignored", "message_id", messageID)
+		return
+	case err != nil:
+		// A claim store outage must not silence the bot. Working unclaimed
+		// risks the duplicate we are fixing, which beats losing the message.
+		s.logger.Warn("claiming message id failed, proceeding unclaimed",
+			"message_id", messageID, "error", err)
+	}
+
+	reply := work(ctx)
+	if reply.Silent() {
+		// Nothing user-visible happened, so a retry is free to try again.
+		s.release(ctx, messageID)
+		return
+	}
+
+	s.deliver(ctx, reply)
+
+	if err := s.deps.Claims.Finish(context.WithoutCancel(ctx), messageID); err != nil {
+		s.logger.Error("finishing message claim", "message_id", messageID, "error", err)
+	}
+}
+
+func (s *Server) release(ctx context.Context, messageID string) {
+	if err := s.deps.Claims.Release(ctx, messageID); err != nil {
+		s.logger.Error("releasing message claim", "message_id", messageID, "error", err)
+	}
+}
 
 // deliver is the only place in the server that sends a WhatsApp message.
 func (s *Server) deliver(ctx context.Context, r Reply) {
