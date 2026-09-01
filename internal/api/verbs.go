@@ -30,7 +30,7 @@ type verb struct {
 // verbs is the whole command set. Run returns a string rather than a Reply so
 // that an executor cannot contradict the Audience its own row declares.
 var verbs = []verb{
-	{Name: "help", Aliases: []string{"?", "commands"}, Audience: audienceEveryone,
+	{Name: "help", Aliases: []string{"?", "commands"}, Audience: audienceSender,
 		Usage: "help, what I understand",
 		Parse: noArgs, Run: (*Server).helpReply},
 
@@ -39,7 +39,7 @@ var verbs = []verb{
 		Parse: noArgs, Run: (*Server).whoReply},
 
 	{Name: "stores", Aliases: []string{"shops", "merchants"}, Needs: needsStores,
-		Audience: audienceEveryone,
+		Audience: audienceSender,
 		Usage:    "stores, shops I have learned",
 		Parse:    noArgs, Run: (*Server).storesReply},
 

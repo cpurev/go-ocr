@@ -213,9 +213,9 @@ func TestEveryVerbAnswersTheRightAudience(t *testing.T) {
 		audienceSender: "the sender", audienceEveryone: "everyone", audienceOthers: "the others",
 	}
 	want := map[string]Audience{
-		"help":   audienceEveryone,
+		"help":   audienceSender,
 		"who":    audienceSender,
-		"stores": audienceEveryone,
+		"stores": audienceSender,
 		"last":   audienceSender,
 		"total":  audienceSender,
 		"edit":   audienceEveryone,

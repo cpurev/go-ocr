@@ -50,10 +50,8 @@ func TestWebhookRetryDuplicatesTheReply(t *testing.T) {
 		}
 	}
 
-	// Meta delivered the same wamid twice. The human should still see one help
-	// message each, not two.
-	if got := len(rep.sent); got != 2 {
-		t.Fatalf("sent %d messages for one logical message delivered twice, want 2 (alice + bob): %v",
+	if got := len(rep.sent); got != 1 {
+		t.Fatalf("sent %d messages for one logical message delivered twice, want 1: %v",
 			got, rep.recipients())
 	}
 }

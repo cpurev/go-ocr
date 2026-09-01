@@ -115,7 +115,7 @@ func (s *Server) replyToImage(ctx context.Context, img whatsapp.InboundImage) Re
 
 	created, err := s.deps.Ingester.Ingest(ctx, model.ReceiptInput{
 		WhatsAppMediaID: img.MediaID,
-		UserID:          img.From,
+		UserID:          relay.Normalize(img.From),
 	})
 
 	sender := relay.Normalize(img.From)
