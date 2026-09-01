@@ -63,7 +63,7 @@ func newTestServer(t *testing.T, numbers []string) (*Server, *fakeReplier) {
 func TestBroadcastFansOutToRoster(t *testing.T) {
 	srv, rep := newTestServer(t, []string{"+" + alice, "+" + bob})
 
-	srv.broadcast(alice, "Receipt #12 saved")
+	srv.deliver(context.Background(), replyAll(alice, "Receipt #12 saved"))
 
 	if got := len(rep.sent); got != 2 {
 		t.Fatalf("sent %d messages, want 2 (sender + one other): %v", got, rep.recipients())
@@ -82,7 +82,7 @@ func TestBroadcastFansOutToRoster(t *testing.T) {
 func TestBroadcastFromStrangerStaysPrivate(t *testing.T) {
 	srv, rep := newTestServer(t, []string{"+" + alice, "+" + bob})
 
-	srv.broadcast(stranger, "hello?")
+	srv.deliver(context.Background(), replyAll(stranger, "hello?"))
 
 	if got := len(rep.sent); got != 1 {
 		t.Fatalf("sent %d messages, want 1: %v", got, rep.recipients())
@@ -95,7 +95,7 @@ func TestBroadcastFromStrangerStaysPrivate(t *testing.T) {
 func TestForwardSkipsSender(t *testing.T) {
 	srv, rep := newTestServer(t, []string{"+" + alice, "+" + bob})
 
-	srv.forward(alice, "picking up milk")
+	srv.deliver(context.Background(), relayOthers(alice, "picking up milk"))
 
 	if got := len(rep.sent); got != 1 {
 		t.Fatalf("sent %d messages, want 1: %v", got, rep.recipients())
@@ -111,7 +111,7 @@ func TestForwardSkipsSender(t *testing.T) {
 func TestNoRosterCollapsesToDirectReply(t *testing.T) {
 	srv, rep := newTestServer(t, nil)
 
-	srv.broadcast(alice, "Receipt #12 saved")
+	srv.deliver(context.Background(), replyAll(alice, "Receipt #12 saved"))
 
 	if got := len(rep.sent); got != 1 {
 		t.Fatalf("sent %d messages, want 1: %v", got, rep.recipients())
@@ -125,7 +125,7 @@ func TestClosedWindowDoesNotHaltFanOut(t *testing.T) {
 	srv, rep := newTestServer(t, []string{"+" + alice, "+" + bob})
 	rep.err = whatsapp.ErrOutsideWindow
 
-	srv.broadcast(alice, "Receipt #12 saved")
+	srv.deliver(context.Background(), replyAll(alice, "Receipt #12 saved"))
 
 	// Both sends are still attempted; the closed window is logged, not fatal.
 	if got := len(rep.sent); got != 2 {
@@ -136,8 +136,8 @@ func TestClosedWindowDoesNotHaltFanOut(t *testing.T) {
 func TestEmptyBodyIsNotSent(t *testing.T) {
 	srv, rep := newTestServer(t, []string{"+" + alice, "+" + bob})
 
-	srv.broadcast(alice, "")
-	srv.forward(alice, "")
+	srv.deliver(context.Background(), replyAll(alice, ""))
+	srv.deliver(context.Background(), relayOthers(alice, ""))
 
 	if got := len(rep.sent); got != 0 {
 		t.Fatalf("sent %d messages, want 0: %v", got, rep.recipients())

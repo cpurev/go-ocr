@@ -73,17 +73,17 @@ func (s *Server) handleWebhookReceive(w http.ResponseWriter, r *http.Request) {
 	// response is written. Retries are safe, whatsappMediaId is unique.
 	images := n.Images()
 	for _, img := range images {
-		s.ingestInboundImage(r.Context(), img)
+		s.deliver(r.Context(), s.replyToImage(r.Context(), img))
 	}
 
 	for _, txt := range n.Texts() {
-		s.handleTextCommand(r.Context(), txt)
+		s.deliver(r.Context(), s.replyToText(r.Context(), txt))
 	}
 
 	httpx.OK(w, http.StatusOK, map[string]int{"images_accepted": len(images)}, nil)
 }
 
-func (s *Server) ingestInboundImage(ctx context.Context, img whatsapp.InboundImage) {
+func (s *Server) replyToImage(ctx context.Context, img whatsapp.InboundImage) Reply {
 	defer func() {
 		if p := recover(); p != nil {
 			s.logger.Error("panic while ingesting webhook image",
@@ -103,94 +103,40 @@ func (s *Server) ingestInboundImage(ctx context.Context, img whatsapp.InboundIma
 		UserID:          img.From,
 	})
 
-	var reply string
+	sender := relay.Normalize(img.From)
+
 	switch {
 	case errors.Is(err, store.ErrDuplicate):
 
 		s.logger.Info("webhook image already ingested", "media_id", img.MediaID)
-		reply = "I already have that receipt saved, nothing new to add."
+		return replyAll(sender, "I already have that receipt saved, nothing new to add.")
 
 	case errors.Is(err, whatsapp.ErrMediaNotFound):
 
 		s.logger.Warn("webhook image expired before download",
 			"media_id", img.MediaID, "error", err)
-		reply = "That image expired before I could fetch it. Please send it again."
+		return replyAll(sender, "That image expired before I could fetch it. Please send it again.")
 
 	case errors.Is(err, whatsapp.ErrNotImage):
 		s.logger.Info("webhook media was not an image", "media_id", img.MediaID)
-		reply = "I can only read photos. That looked like a video or a document."
+		return replyAll(sender, "I can only read photos. That looked like a video or a document.")
 
 	case errors.Is(err, ocr.ErrUnreadable):
 		s.logger.Info("webhook image unreadable", "media_id", img.MediaID)
-		reply = "I couldn't find any text in that photo. Try again with more light, " +
-			"the receipt flat, and the whole thing in frame."
+		return replyAll(sender, "I couldn't find any text in that photo. Try again with more light, "+
+			"the receipt flat, and the whole thing in frame.")
 
 	case err != nil:
 		s.logger.Error("webhook image ingestion failed",
 			"media_id", img.MediaID, "from", img.From, "error", err)
-		reply = "Something went wrong on my side reading that receipt. Please try again."
+		return replyAll(sender, "Something went wrong on my side reading that receipt. Please try again.")
 
 	default:
 		s.logger.Info("webhook image ingested",
 			"receipt_id", created.ID, "media_id", img.MediaID,
 			"merchant", created.Merchant, "total", created.Total, "date", created.Date)
-		reply = formatReceiptReply(created)
+		return replyAll(sender, formatReceiptReply(created))
 	}
-
-	s.broadcast(img.From, reply)
-}
-
-const replyTimeout = 15 * time.Second
-
-// broadcast sends body to the sender as written and to everyone else on the
-// roster with attribution. Off-roster senders get a plain 1:1 reply.
-func (s *Server) broadcast(sender, body string) {
-	if body == "" {
-		return
-	}
-
-	s.replyTo(sender, body)
-
-	for _, other := range s.deps.Relay.Others(sender) {
-		s.replyTo(other, attribute(sender, body))
-	}
-}
-
-// forward relays a message to the rest of the roster, skipping the sender.
-func (s *Server) forward(sender, body string) {
-	if body == "" {
-		return
-	}
-
-	for _, other := range s.deps.Relay.Others(sender) {
-		s.replyTo(other, attribute(sender, body))
-	}
-}
-
-// attribute labels a relayed message with who sent it.
-func attribute(sender, body string) string {
-	return "From +" + relay.Normalize(sender) + ":\n\n" + body
-}
-
-func (s *Server) replyTo(to, body string) {
-	if s.deps.Replier == nil || body == "" || to == "" {
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), replyTimeout)
-	defer cancel()
-
-	err := s.deps.Replier.SendText(ctx, to, body)
-	switch {
-	case errors.Is(err, whatsapp.ErrOutsideWindow):
-		s.logger.Warn("whatsapp reply dropped: recipient's 24h window is closed",
-			"to", to, "hint", "recipient must message the bot to reopen it")
-		return
-	case err != nil:
-		s.logger.Error("sending whatsapp reply", "to", to, "error", err)
-		return
-	}
-	s.logger.Info("whatsapp reply sent", "to", to, "body_bytes", len(body))
 }
 
 func formatReceiptReply(r model.Receipt) string {

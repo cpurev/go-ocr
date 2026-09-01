@@ -9,13 +9,14 @@ import (
 
 	"github.com/cpurev/go-ocr/internal/model"
 	"github.com/cpurev/go-ocr/internal/receipt"
+	"github.com/cpurev/go-ocr/internal/relay"
 	"github.com/cpurev/go-ocr/internal/store"
 	"github.com/cpurev/go-ocr/internal/whatsapp"
 )
 
 const commandTimeout = 20 * time.Second
 
-func (s *Server) handleTextCommand(ctx context.Context, txt whatsapp.InboundText) {
+func (s *Server) replyToText(ctx context.Context, txt whatsapp.InboundText) Reply {
 	defer func() {
 		if p := recover(); p != nil {
 			s.logger.Error("panic while handling text command",
@@ -23,13 +24,14 @@ func (s *Server) handleTextCommand(ctx context.Context, txt whatsapp.InboundText
 		}
 	}()
 
+	sender := relay.Normalize(txt.From)
+
 	cmd := ParseCommand(txt.Body)
 	if cmd.Kind == CommandNone {
 		s.logger.Info("webhook text message was not a command",
 			"from", txt.From, "message_id", txt.MessageID, "body_bytes", len(txt.Body))
 
-		s.forward(txt.From, txt.Body)
-		return
+		return relayOthers(sender, txt.Body)
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, commandTimeout)
@@ -45,7 +47,7 @@ func (s *Server) handleTextCommand(ctx context.Context, txt whatsapp.InboundText
 		reply = s.editReceiptReply(ctx, cmd)
 	}
 
-	s.broadcast(txt.From, reply)
+	return replyAll(sender, reply)
 }
 
 func (s *Server) editReceiptReply(ctx context.Context, cmd Command) string {
