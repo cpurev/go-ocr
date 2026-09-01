@@ -16,6 +16,7 @@ type fakeReceipts struct {
 	getReceiptByNumber func(ctx context.Context, number int) (model.Receipt, error)
 	listRecentReceipts func(ctx context.Context, limit int) ([]model.Receipt, error)
 	updateReceipt      func(ctx context.Context, id string, update model.ReceiptUpdate) (model.Receipt, error)
+	deleteReceipt      func(ctx context.Context, id string) error
 }
 
 var _ store.ReceiptStore = (*fakeReceipts)(nil)
@@ -60,4 +61,11 @@ func (f *fakeReceipts) UpdateReceipt(ctx context.Context, id string, update mode
 		return model.Receipt{}, nil
 	}
 	return f.updateReceipt(ctx, id, update)
+}
+
+func (f *fakeReceipts) DeleteReceipt(ctx context.Context, id string) error {
+	if f.deleteReceipt == nil {
+		return nil
+	}
+	return f.deleteReceipt(ctx, id)
 }

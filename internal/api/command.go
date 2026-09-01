@@ -104,6 +104,22 @@ func parseEdit(args string) Command {
 	return Command{Number: number, Update: update}
 }
 
+// A wrong edit is repairable and a wrong delete is not, so the destructive verb
+// is the one that pays for aim.
+func parseDelete(args string) Command {
+	m := editNumberRe.FindStringSubmatchIndex(args)
+	if m == nil || strings.TrimSpace(args[m[1]:]) != "" {
+		return Command{Err: errors.New("which receipt? name its number")}
+	}
+
+	number, err := strconv.Atoi(args[m[2]:m[3]])
+	if err != nil || number <= 0 {
+		return Command{Err: errors.New("receipt number must be a positive number")}
+	}
+
+	return Command{Number: number}
+}
+
 func parseFields(tail string) (model.ReceiptUpdate, error) {
 	var update model.ReceiptUpdate
 

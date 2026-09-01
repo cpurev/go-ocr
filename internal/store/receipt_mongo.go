@@ -227,6 +227,25 @@ func (m *MongoReceipts) UpdateReceipt(ctx context.Context, id string, update mod
 	return doc.toModel(), nil
 }
 
+// A deletedAt flag would have to be honoured by every reader, and the one that
+// forgot would leak the receipt back.
+func (m *MongoReceipts) DeleteReceipt(ctx context.Context, id string) error {
+	objID, err := bson.ObjectIDFromHex(id)
+	if err != nil {
+		return ErrNotFound
+	}
+
+	res, err := m.coll.DeleteOne(ctx, bson.D{{Key: "_id", Value: objID}})
+	if err != nil {
+		return fmt.Errorf("mongo: deleting receipt %s: %w", id, err)
+	}
+	if res.DeletedCount == 0 {
+		return ErrNotFound
+	}
+
+	return nil
+}
+
 func (m *MongoReceipts) GetReceipt(ctx context.Context, id string) (model.Receipt, error) {
 	objID, err := bson.ObjectIDFromHex(id)
 	if err != nil {

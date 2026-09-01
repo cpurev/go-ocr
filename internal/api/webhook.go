@@ -163,16 +163,7 @@ func formatReceiptReply(r model.Receipt) string {
 		b.WriteString("*Receipt saved*\n\n")
 	}
 
-	if r.Merchant != "" {
-		fmt.Fprintf(&b, "Merchant: %s\n", r.Merchant)
-	}
-	if r.Date != "" {
-		fmt.Fprintf(&b, "Date: %s\n", r.Date)
-	}
-	fmt.Fprintf(&b, "Total: %.2f %s\n", r.Total, r.Currency)
-	if r.Tax > 0 {
-		fmt.Fprintf(&b, "Tax: %.2f %s\n", r.Tax, r.Currency)
-	}
+	writeReceiptFields(&b, r)
 	if n := len(r.LineItems); n > 0 {
 		fmt.Fprintf(&b, "Items: %d\n", n)
 	}

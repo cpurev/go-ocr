@@ -122,6 +122,19 @@ func formatReceiptLine(r model.Receipt) string {
 	return line + ", " + r.Date
 }
 
+func writeReceiptFields(b *strings.Builder, r model.Receipt) {
+	if r.Merchant != "" {
+		fmt.Fprintf(b, "Merchant: %s\n", r.Merchant)
+	}
+	if r.Date != "" {
+		fmt.Fprintf(b, "Date: %s\n", r.Date)
+	}
+	fmt.Fprintf(b, "Total: %.2f %s\n", r.Total, r.Currency)
+	if r.Tax > 0 {
+		fmt.Fprintf(b, "Tax: %.2f %s\n", r.Tax, r.Currency)
+	}
+}
+
 func (s *Server) editReply(ctx context.Context, req request) string {
 	number := req.Cmd.Number
 	if number == 0 {
@@ -175,6 +188,39 @@ func (s *Server) editReply(ctx context.Context, req request) string {
 	return formatEditReply(updated, learned)
 }
 
+func (s *Server) deleteReply(ctx context.Context, req request) string {
+	number := req.Cmd.Number
+
+	existing, err := s.deps.Receipts.GetReceiptByNumber(ctx, number)
+	if errors.Is(err, store.ErrNotFound) {
+		return fmt.Sprintf("I don't have a receipt #%d.", number)
+	}
+	if err != nil {
+		s.logger.Error("looking up receipt to delete", "number", number, "error", err)
+		return "Something went wrong finding that receipt. Please try again."
+	}
+
+	err = s.deps.Receipts.DeleteReceipt(ctx, existing.ID)
+	if errors.Is(err, store.ErrNotFound) {
+		return fmt.Sprintf("I don't have a receipt #%d.", number)
+	}
+	if err != nil {
+		s.logger.Error("deleting receipt",
+			"number", number, "receipt_id", existing.ID, "error", err)
+		return "Something went wrong deleting that receipt. Please try again."
+	}
+
+	s.logger.Info("receipt deleted",
+		"number", existing.Number, "receipt_id", existing.ID,
+		"merchant", existing.Merchant, "total", existing.Total)
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "*Receipt #%d deleted*\n\n", existing.Number)
+	writeReceiptFields(&b, existing)
+
+	return b.String()
+}
+
 func (s *Server) teachStore(ctx context.Context, existing model.Receipt, update model.ReceiptUpdate) string {
 	if s.deps.Stores == nil || update.Merchant == nil {
 		return ""
@@ -225,17 +271,7 @@ func formatEditReply(r model.Receipt, learned string) string {
 	var b strings.Builder
 
 	fmt.Fprintf(&b, "*Receipt #%d updated*\n\n", r.Number)
-
-	if r.Merchant != "" {
-		fmt.Fprintf(&b, "Merchant: %s\n", r.Merchant)
-	}
-	if r.Date != "" {
-		fmt.Fprintf(&b, "Date: %s\n", r.Date)
-	}
-	fmt.Fprintf(&b, "Total: %.2f %s\n", r.Total, r.Currency)
-	if r.Tax > 0 {
-		fmt.Fprintf(&b, "Tax: %.2f %s\n", r.Tax, r.Currency)
-	}
+	writeReceiptFields(&b, r)
 
 	if learned != "" {
 		fmt.Fprintf(&b, "\nI'll call this shop %s from now on.", learned)

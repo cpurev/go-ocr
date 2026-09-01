@@ -212,3 +212,52 @@ func TestEditWithNoNumberWhenThereIsNothingToTarget(t *testing.T) {
 		})
 	}
 }
+
+func TestDeleteReply(t *testing.T) {
+	gone := model.Receipt{ID: "a1", Number: 7, Merchant: "ICA",
+		Total: 154.53, Tax: 30.91, Currency: "SEK", Date: "2026-08-04"}
+
+	var deletedID string
+	receipts := &fakeReceipts{
+		getReceiptByNumber: func(_ context.Context, number int) (model.Receipt, error) {
+			if number != gone.Number {
+				return model.Receipt{}, store.ErrNotFound
+			}
+			return gone, nil
+		},
+		deleteReceipt: func(_ context.Context, id string) error {
+			deletedID = id
+			return nil
+		},
+	}
+	srv := newCommandServer(t, nil, receipts)
+
+	got := srv.deleteReply(context.Background(), request{Sender: alice, Cmd: Command{Number: 7}})
+
+	want := "*Receipt #7 deleted*\n\n" +
+		"Merchant: ICA\nDate: 2026-08-04\nTotal: 154.53 SEK\nTax: 30.91 SEK\n"
+	if got != want {
+		t.Errorf("delete replied %q, want %q", got, want)
+	}
+	if deletedID != gone.ID {
+		t.Errorf("delete removed receipt %q, want the one it echoed, %q", deletedID, gone.ID)
+	}
+}
+
+func TestDeleteReplyWhenThereIsNoSuchReceipt(t *testing.T) {
+	receipts := &fakeReceipts{
+		getReceiptByNumber: func(context.Context, int) (model.Receipt, error) {
+			return model.Receipt{}, store.ErrNotFound
+		},
+		deleteReceipt: func(_ context.Context, id string) error {
+			t.Fatalf("delete removed receipt %q, want nothing removed", id)
+			return nil
+		},
+	}
+	srv := newCommandServer(t, nil, receipts)
+
+	got := srv.deleteReply(context.Background(), request{Sender: alice, Cmd: Command{Number: 7}})
+	if want := "I don't have a receipt #7."; got != want {
+		t.Errorf("delete replied %q, want %q", got, want)
+	}
+}

@@ -49,6 +49,13 @@ var verbs = []verb{
 	{Name: "edit", Needs: needsReceipts, Audience: audienceEveryone,
 		Usage: "edit 7 merchant: ICA, or edit total: 154.53 for the newest",
 		Parse: parseEdit, Run: (*Server).editReply},
+
+	// audienceEveryone because the echo of what vanished is the only backup a
+	// deleted receipt gets, and the chat log is where it survives.
+	{Name: "delete", Aliases: []string{"remove", "rm"}, Needs: needsReceipts,
+		Audience: audienceEveryone,
+		Usage:    "delete 7",
+		Parse:    parseDelete, Run: (*Server).deleteReply},
 }
 
 var verbIndex = indexVerbs()

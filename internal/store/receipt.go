@@ -89,6 +89,8 @@ type ReceiptStore interface {
 	ListRecentReceipts(ctx context.Context, limit int) ([]model.Receipt, error)
 
 	UpdateReceipt(ctx context.Context, id string, update model.ReceiptUpdate) (model.Receipt, error)
+
+	DeleteReceipt(ctx context.Context, id string) error
 }
 
 type StoreDirectory interface {

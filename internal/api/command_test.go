@@ -79,6 +79,12 @@ func TestParseCommand(t *testing.T) {
 		{text: "edit 0 merchant: ICA", verb: "edit", errSet: true},
 		{text: "edit 7", verb: "edit", number: 7, errSet: true},
 
+		{text: "delete 7", verb: "delete", number: 7},
+		{text: "delete#7", verb: "delete", number: 7},
+		{text: "remove 7", verb: "delete", number: 7},
+		{text: "rm 7", verb: "delete", number: 7},
+		{text: "delete", verb: "delete", errSet: true},
+
 		{text: ""},
 		{text: "   "},
 		{text: "picking up milk"},
@@ -131,6 +137,36 @@ func TestParseEditFindsTheReceiptNumber(t *testing.T) {
 		if got, want := showUpdate(cmd.Update), `merchant="ICA"`; got != want {
 			t.Errorf("parseEdit(%q) parsed update %s, want %s", args, got, want)
 		}
+	}
+}
+
+func TestParseDelete(t *testing.T) {
+	tests := []struct {
+		args   string
+		number int
+		errSet bool
+	}{
+		{args: "7", number: 7},
+		{args: "#7", number: 7},
+		{args: "  #7  ", number: 7},
+		{args: "", errSet: true},
+		{args: "now", errSet: true},
+		{args: "0", errSet: true},
+		{args: "abc", errSet: true},
+		{args: "7 now", errSet: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("%q", tt.args), func(t *testing.T) {
+			cmd := parseDelete(tt.args)
+
+			if (cmd.Err != nil) != tt.errSet {
+				t.Fatalf("parseDelete(%q) gave err %v, want an error: %v", tt.args, cmd.Err, tt.errSet)
+			}
+			if cmd.Number != tt.number {
+				t.Errorf("parseDelete(%q) targets receipt #%d, want #%d", tt.args, cmd.Number, tt.number)
+			}
+		})
 	}
 }
 
