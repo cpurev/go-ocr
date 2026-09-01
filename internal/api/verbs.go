@@ -23,7 +23,10 @@ type verb struct {
 	// Usage is the line help prints and the suggestion a parse error carries.
 	Usage string
 
-	Parse func(args string, now time.Time) Command
+	// Parse reports false when args are not this verb's arguments at all, which
+	// makes the message ordinary chat. A matched verb carrying a wrong value
+	// says so in Command.Err instead.
+	Parse func(args string, now time.Time) (Command, bool)
 	Run   func(*Server, context.Context, request) string
 }
 

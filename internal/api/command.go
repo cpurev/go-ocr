@@ -31,115 +31,144 @@ var (
 		`(?i)\b(merchant|shop|store|total|sum|subtotal|tax|vat|moms|currency|date)\b\s*[:=]?\s*`)
 )
 
-// parseCommand takes the leading run of letters as the verb word. A text with
-// no leading letter is its own word, which is what lets "?" be an alias.
+// parseCommand matches the leading word against the verb table. The word alone
+// is not enough, because most of the table is also ordinary English. The rest of
+// the message has to parse as that verb's arguments before it is a command.
 func parseCommand(text string, now time.Time) (*verb, Command, bool) {
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {
 		return nil, Command{}, false
 	}
 
-	end := 0
-	for end < len(trimmed) && isLetter(trimmed[end]) {
-		end++
-	}
-
-	word, args := trimmed, ""
-	if end > 0 {
-		word, args = trimmed[:end], strings.TrimSpace(trimmed[end:])
-	}
+	word := verbWord(trimmed)
+	args := strings.TrimSpace(trimmed[len(word):])
 
 	v, ok := verbIndex[strings.ToLower(word)]
 	if !ok {
 		return nil, Command{}, false
 	}
 
-	return v, v.Parse(args, now), true
+	cmd, matched := v.Parse(args, now)
+	if !matched {
+		return nil, Command{}, false
+	}
+
+	return v, cmd, true
+}
+
+// verbWord is the leading run of letters. A text with no leading letter is its
+// own word, which is what lets "?" be an alias and what stops "?!" being one.
+func verbWord(trimmed string) string {
+	end := 0
+	for end < len(trimmed) && isLetter(trimmed[end]) {
+		end++
+	}
+	if end == 0 {
+		return trimmed
+	}
+
+	return trimmed[:end]
 }
 
 func isLetter(b byte) bool {
 	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
 }
 
-func noArgs(string, time.Time) Command { return Command{} }
+func noArgs(args string, _ time.Time) (Command, bool) {
+	return Command{}, strings.TrimSpace(args) == ""
+}
 
 const (
 	defaultRecent = 5
 	maxRecent     = 20
 )
 
-func parseLast(args string, _ time.Time) Command {
+func parseLast(args string, _ time.Time) (Command, bool) {
 	args = strings.TrimSpace(args)
 	if args == "" {
-		return Command{Limit: defaultRecent}
+		return Command{Limit: defaultRecent}, true
 	}
 
 	howMany, err := strconv.Atoi(args)
-	if err != nil || howMany < 1 {
-		return Command{Err: errors.New("how many? try: last 5")}
+	if err != nil {
+		return Command{}, false
+	}
+	// A number too small to count out is still unmistakably a count, not chat.
+	if howMany < 1 {
+		return Command{Err: errors.New("how many? try: last 5")}, true
 	}
 	if howMany > maxRecent {
 		howMany = maxRecent
 	}
 
-	return Command{Limit: howMany}
+	return Command{Limit: howMany}, true
 }
 
-func parseEdit(args string, _ time.Time) Command {
-	number, tail := 0, args
+func parseEdit(args string, _ time.Time) (Command, bool) {
+	m := editNumberRe.FindStringSubmatchIndex(args)
+	if m == nil && !fieldRe.MatchString(args) {
+		return Command{}, false
+	}
 
-	if m := editNumberRe.FindStringSubmatchIndex(args); m != nil {
+	number, tail := 0, args
+	if m != nil {
 		n, err := strconv.Atoi(args[m[2]:m[3]])
 		if err != nil || n <= 0 {
-			return Command{Err: errors.New("receipt number must be a positive number")}
+			return Command{Err: errors.New("receipt number must be a positive number")}, true
 		}
 		number, tail = n, args[m[1]:]
 	}
 
 	update, err := parseFields(tail)
 	if err != nil {
-		return Command{Number: number, Err: err}
+		return Command{Number: number, Err: err}, true
 	}
 	if update.IsEmpty() {
 		return Command{Number: number,
-			Err: errors.New("name at least one field to change, e.g. merchant: ICA")}
+			Err: errors.New("name at least one field to change, e.g. merchant: ICA")}, true
 	}
 
-	return Command{Number: number, Update: update}
+	return Command{Number: number, Update: update}, true
 }
 
 // A wrong edit is repairable and a wrong delete is not, so the destructive verb
 // is the one that pays for aim.
-func parseDelete(args string, _ time.Time) Command {
+func parseDelete(args string, _ time.Time) (Command, bool) {
 	m := editNumberRe.FindStringSubmatchIndex(args)
-	if m == nil || strings.TrimSpace(args[m[1]:]) != "" {
-		return Command{Err: errors.New("which receipt? name its number")}
+	if m == nil {
+		return Command{}, false
+	}
+	if strings.TrimSpace(args[m[1]:]) != "" {
+		return Command{Err: errors.New("which receipt? name its number")}, true
 	}
 
 	number, err := strconv.Atoi(args[m[2]:m[3]])
 	if err != nil || number <= 0 {
-		return Command{Err: errors.New("receipt number must be a positive number")}
+		return Command{Err: errors.New("receipt number must be a positive number")}, true
 	}
 
-	return Command{Number: number}
+	return Command{Number: number}, true
 }
 
-func parseTotal(args string, now time.Time) Command {
+func parseTotal(args string, now time.Time) (Command, bool) {
 	// The rejoined remainder is used either way, so "total last  month" parses
 	// the same as "total all last  month" rather than only the latter.
 	rest, everyone := stripToken(args, "all")
+
+	period, err := ParsePeriod(rest, now)
+	if errors.Is(err, ErrNotAPeriod) {
+		return Command{}, false
+	}
+	if err != nil {
+		return Command{Err: err}, true
+	}
 
 	scope := scopeSender
 	if everyone {
 		scope = scopeEveryone
 	}
 
-	period, err := ParsePeriod(rest, now)
-	if err != nil {
-		return Command{Err: err}
-	}
-
-	return Command{Period: period, Scope: scope}
+	return Command{Period: period, Scope: scope}, true
 }
 
 // stripToken removes a whole word, so the "all" inside "fallout" is left where

@@ -38,76 +38,123 @@ func showUpdate(u model.ReceiptUpdate) string {
 	return strings.TrimSpace(b.String())
 }
 
+func errText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
 // testNow is the clock every parser test reads. UTC keeps it independent of the
 // machine's zoneinfo, which the api package does not embed.
 var testNow = time.Date(2026, time.September, 15, 12, 0, 0, 0, time.UTC)
 
+// parseCommandCase pins one message in both directions. An empty verb means the
+// text must be relayed to the other phone untouched.
+type parseCommandCase struct {
+	text    string
+	verb    string
+	number  int
+	limit   int
+	update  model.ReceiptUpdate
+	wantErr string
+}
+
+var parseCommandTests = []parseCommandCase{
+	{text: "help", verb: "help"},
+	{text: "HELP", verb: "help"},
+	{text: "help me carry the bags"},
+	{text: "?", verb: "help"},
+	{text: "?! what was that"},
+	{text: "commands", verb: "help"},
+	{text: "commands are hard to remember"},
+
+	{text: "who", verb: "who"},
+	{text: "who is coming tonight"},
+	{text: "relay", verb: "who"},
+	{text: "relay that to him for me"},
+
+	{text: "  stores  ", verb: "stores"},
+	{text: "stores are closed today"},
+	{text: "shops", verb: "stores"},
+	{text: "shops close at six"},
+	{text: "merchants", verb: "stores"},
+	{text: "merchants of venice on friday"},
+
+	{text: "last", verb: "last", limit: defaultRecent},
+	{text: "last 7", verb: "last", limit: 7},
+	{text: "last night was fun"},
+	{text: "last 0", verb: "last", wantErr: "how many? try: last 5"},
+	{text: "recent", verb: "last", limit: defaultRecent},
+	{text: "recent photos are all gone"},
+
+	{text: "total", verb: "total"},
+	{text: "total all", verb: "total"},
+	{text: "total last month", verb: "total"},
+	{text: "total 2026-08", verb: "total"},
+	{text: "total all last month", verb: "total"},
+	{text: "total nonsense"},
+	{text: "total 2026-99", verb: "total",
+		wantErr: `I don't know the period "2026-99"; try "last month" or "2026-08"`},
+	{text: "total 2026-8", verb: "total",
+		wantErr: `I don't know the period "2026-8"; try "last month" or "2026-08"`},
+	{text: "sum", verb: "total"},
+	{text: "sum of the parts is bigger"},
+	{text: "spent", verb: "total"},
+	{text: "spent too much today"},
+
+	{text: "edit 7 merchant: ICA", verb: "edit", number: 7,
+		update: model.ReceiptUpdate{Merchant: ptr("ICA")}},
+	{text: "edit#7 total: 154,53", verb: "edit", number: 7,
+		update: model.ReceiptUpdate{Total: ptr(154.53)}},
+	{text: "edit 7 total: 154.53, date: 2026-08-04", verb: "edit", number: 7,
+		update: model.ReceiptUpdate{Total: ptr(154.53), Date: ptr("2026-08-04")}},
+	{text: "edit 7 merchant: Willys, currency: SEK", verb: "edit", number: 7,
+		update: model.ReceiptUpdate{Merchant: ptr("Willys"), Currency: ptr("SEK")}},
+	{text: "edit merchant: ICA", verb: "edit",
+		update: model.ReceiptUpdate{Merchant: ptr("ICA")}},
+	{text: "edit total: 154.53", verb: "edit",
+		update: model.ReceiptUpdate{Total: ptr(154.53)}},
+	{text: "edit 0 merchant: ICA", verb: "edit",
+		wantErr: "receipt number must be a positive number"},
+	{text: "edit 7", verb: "edit", number: 7,
+		wantErr: "name at least one field to change, e.g. merchant: ICA"},
+	{text: "edit 7 total: abc", verb: "edit", number: 7,
+		wantErr: `total "abc" is not a number`},
+	{text: "edit"},
+	{text: "edit the shopping list"},
+	// fieldRe reads a bare field noun anywhere in the args, so these two are
+	// commands today. They are the widest the matcher still opens.
+	{text: "edit my store list", verb: "edit",
+		update: model.ReceiptUpdate{Merchant: ptr("list")}},
+	{text: "delete 3 messages", verb: "delete",
+		wantErr: "which receipt? name its number"},
+
+	{text: "delete 7", verb: "delete", number: 7},
+	{text: "delete#7", verb: "delete", number: 7},
+	{text: "delete 7 and also 8", verb: "delete",
+		wantErr: "which receipt? name its number"},
+	{text: "delete"},
+	{text: "delete that photo"},
+	{text: "remove 7", verb: "delete", number: 7},
+	{text: "remove your shoes please"},
+	{text: "rm 7", verb: "delete", number: 7},
+	{text: "rm the stains later"},
+
+	{text: ""},
+	{text: "   "},
+	{text: "picking up milk"},
+}
+
 func TestParseCommand(t *testing.T) {
-	tests := []struct {
-		text   string
-		verb   string
-		number int
-		limit  int
-		update model.ReceiptUpdate
-		errSet bool
-	}{
-		{text: "help", verb: "help"},
-		{text: "?", verb: "help"},
-		{text: "commands", verb: "help"},
-		{text: "HELP", verb: "help"},
-
-		{text: "who", verb: "who"},
-		{text: "relay", verb: "who"},
-
-		{text: "  stores  ", verb: "stores"},
-		{text: "shops", verb: "stores"},
-		{text: "merchants", verb: "stores"},
-
-		{text: "last", verb: "last", limit: defaultRecent},
-		{text: "recent", verb: "last", limit: defaultRecent},
-		{text: "last 7", verb: "last", limit: 7},
-
-		{text: "edit 7 merchant: ICA", verb: "edit", number: 7,
-			update: model.ReceiptUpdate{Merchant: ptr("ICA")}},
-		{text: "edit#7 total: 154,53", verb: "edit", number: 7,
-			update: model.ReceiptUpdate{Total: ptr(154.53)}},
-		{text: "edit 7 total: 154.53, date: 2026-08-04", verb: "edit", number: 7,
-			update: model.ReceiptUpdate{Total: ptr(154.53), Date: ptr("2026-08-04")}},
-		{text: "edit 7 merchant: Willys, currency: SEK", verb: "edit", number: 7,
-			update: model.ReceiptUpdate{Merchant: ptr("Willys"), Currency: ptr("SEK")}},
-
-		{text: "edit merchant: ICA", verb: "edit",
-			update: model.ReceiptUpdate{Merchant: ptr("ICA")}},
-		{text: "edit total: 154.53", verb: "edit",
-			update: model.ReceiptUpdate{Total: ptr(154.53)}},
-
-		{text: "edit 0 merchant: ICA", verb: "edit", errSet: true},
-		{text: "edit 7", verb: "edit", number: 7, errSet: true},
-
-		{text: "delete 7", verb: "delete", number: 7},
-		{text: "delete#7", verb: "delete", number: 7},
-		{text: "remove 7", verb: "delete", number: 7},
-		{text: "rm 7", verb: "delete", number: 7},
-		{text: "delete", verb: "delete", errSet: true},
-
-		{text: "total", verb: "total"},
-		{text: "sum", verb: "total"},
-		{text: "spent", verb: "total"},
-		{text: "total last month", verb: "total"},
-		{text: "total xyzzy", verb: "total", errSet: true},
-
-		{text: ""},
-		{text: "   "},
-		{text: "picking up milk"},
-	}
-
-	for _, tt := range tests {
+	for _, tt := range parseCommandTests {
 		t.Run(fmt.Sprintf("%q", tt.text), func(t *testing.T) {
 			v, cmd, ok := parseCommand(tt.text, testNow)
 
 			if tt.verb == "" {
 				if ok {
-					t.Fatalf("%q matched the %q verb, want it relayed as chat", tt.text, v.Name)
+					t.Fatalf("%q ran the %q command, want it relayed to the other phone as chat",
+						tt.text, v.Name)
 				}
 				return
 			}
@@ -118,8 +165,8 @@ func TestParseCommand(t *testing.T) {
 			if v.Name != tt.verb {
 				t.Fatalf("%q matched the %q verb, want %q", tt.text, v.Name, tt.verb)
 			}
-			if (cmd.Err != nil) != tt.errSet {
-				t.Fatalf("%q parsed with err %v, want an error: %v", tt.text, cmd.Err, tt.errSet)
+			if got := errText(cmd.Err); got != tt.wantErr {
+				t.Fatalf("%q answered %q, want %q", tt.text, got, tt.wantErr)
 			}
 			if cmd.Number != tt.number {
 				t.Errorf("%q parsed receipt number %d, want %d", tt.text, cmd.Number, tt.number)
@@ -134,10 +181,75 @@ func TestParseCommand(t *testing.T) {
 	}
 }
 
+// Verb words are ordinary English too, so an alias that only ever appears in
+// the table as a command is one production relay away from eating a sentence
+// that starts with it.
+func TestEveryVerbWordIsPinnedAsBothCommandAndChat(t *testing.T) {
+	type coverage struct{ command, chat bool }
+
+	seen := make(map[string]*coverage)
+	for _, tt := range parseCommandTests {
+		trimmed := strings.TrimSpace(tt.text)
+		word := verbWord(trimmed)
+
+		key := strings.ToLower(word)
+		if _, known := verbIndex[key]; !known {
+			continue
+		}
+
+		if seen[key] == nil {
+			seen[key] = &coverage{}
+		}
+		if tt.verb != "" {
+			seen[key].command = true
+			continue
+		}
+		// A bare verb word relayed as chat says nothing about the gate, so only
+		// a sentence that carries on past the word counts here.
+		if strings.TrimSpace(trimmed[len(word):]) != "" {
+			seen[key].chat = true
+		}
+	}
+
+	for _, v := range verbs {
+		for _, word := range append([]string{v.Name}, v.Aliases...) {
+			c := seen[word]
+			if c == nil || !c.command {
+				t.Errorf("no case in parseCommandTests runs %q as a command", word)
+				continue
+			}
+
+			// A word with no letters can only ever match alone, because any
+			// text after it becomes part of the word and misses the index.
+			if !allLetters(word) {
+				continue
+			}
+			if !c.chat {
+				t.Errorf("no case in parseCommandTests sends a sentence starting with %q "+
+					"to the other phone, so nothing stops %q swallowing ordinary chat",
+					word, word)
+			}
+		}
+	}
+}
+
+func allLetters(word string) bool {
+	for i := 0; i < len(word); i++ {
+		if !isLetter(word[i]) {
+			return false
+		}
+	}
+	return word != ""
+}
+
 func TestParseEditFindsTheReceiptNumber(t *testing.T) {
 	for _, args := range []string{"7 merchant: ICA", "#7 merchant: ICA", "  #  7 merchant: ICA"} {
-		cmd := parseEdit(args, testNow)
+		cmd, matched := parseEdit(args, testNow)
 
+		if !matched {
+			t.Errorf("parseEdit(%q) read the args as chat", args)
+			continue
+		}
 		if cmd.Err != nil {
 			t.Errorf("parseEdit(%q) failed with %v", args, cmd.Err)
 			continue
@@ -153,26 +265,31 @@ func TestParseEditFindsTheReceiptNumber(t *testing.T) {
 
 func TestParseDelete(t *testing.T) {
 	tests := []struct {
-		args   string
-		number int
-		errSet bool
+		args    string
+		number  int
+		matched bool
+		wantErr string
 	}{
-		{args: "7", number: 7},
-		{args: "#7", number: 7},
-		{args: "  #7  ", number: 7},
-		{args: "", errSet: true},
-		{args: "now", errSet: true},
-		{args: "0", errSet: true},
-		{args: "abc", errSet: true},
-		{args: "7 now", errSet: true},
+		{args: "7", number: 7, matched: true},
+		{args: "#7", number: 7, matched: true},
+		{args: "  #7  ", number: 7, matched: true},
+		{args: "0", matched: true, wantErr: "receipt number must be a positive number"},
+		{args: "7 now", matched: true, wantErr: "which receipt? name its number"},
+		{args: ""},
+		{args: "now"},
+		{args: "abc"},
+		{args: "that photo"},
 	}
 
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("%q", tt.args), func(t *testing.T) {
-			cmd := parseDelete(tt.args, testNow)
+			cmd, matched := parseDelete(tt.args, testNow)
 
-			if (cmd.Err != nil) != tt.errSet {
-				t.Fatalf("parseDelete(%q) gave err %v, want an error: %v", tt.args, cmd.Err, tt.errSet)
+			if matched != tt.matched {
+				t.Fatalf("parseDelete(%q) matched: %v, want %v", tt.args, matched, tt.matched)
+			}
+			if got := errText(cmd.Err); got != tt.wantErr {
+				t.Fatalf("parseDelete(%q) answered %q, want %q", tt.args, got, tt.wantErr)
 			}
 			if cmd.Number != tt.number {
 				t.Errorf("parseDelete(%q) targets receipt #%d, want #%d", tt.args, cmd.Number, tt.number)
@@ -255,29 +372,34 @@ func TestHelpTextDocumentsEveryVerb(t *testing.T) {
 
 func TestParseLast(t *testing.T) {
 	tests := []struct {
-		args   string
-		limit  int
-		errSet bool
+		args    string
+		limit   int
+		matched bool
+		wantErr string
 	}{
-		{args: "", limit: defaultRecent},
-		{args: "5", limit: 5},
-		{args: "  5  ", limit: 5},
-		{args: "1", limit: 1},
-		{args: "20", limit: maxRecent},
-		{args: "21", limit: maxRecent},
-		{args: "999", limit: maxRecent},
-		{args: "0", errSet: true},
-		{args: "-1", errSet: true},
-		{args: "five", errSet: true},
-		{args: "5 receipts", errSet: true},
+		{args: "", limit: defaultRecent, matched: true},
+		{args: "5", limit: 5, matched: true},
+		{args: "  5  ", limit: 5, matched: true},
+		{args: "1", limit: 1, matched: true},
+		{args: "20", limit: maxRecent, matched: true},
+		{args: "21", limit: maxRecent, matched: true},
+		{args: "999", limit: maxRecent, matched: true},
+		{args: "0", matched: true, wantErr: "how many? try: last 5"},
+		{args: "-1", matched: true, wantErr: "how many? try: last 5"},
+		{args: "five"},
+		{args: "5 receipts"},
+		{args: "night was fun"},
 	}
 
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("%q", tt.args), func(t *testing.T) {
-			cmd := parseLast(tt.args, testNow)
+			cmd, matched := parseLast(tt.args, testNow)
 
-			if (cmd.Err != nil) != tt.errSet {
-				t.Fatalf("parseLast(%q) gave err %v, want an error: %v", tt.args, cmd.Err, tt.errSet)
+			if matched != tt.matched {
+				t.Fatalf("parseLast(%q) matched: %v, want %v", tt.args, matched, tt.matched)
+			}
+			if got := errText(cmd.Err); got != tt.wantErr {
+				t.Fatalf("parseLast(%q) answered %q, want %q", tt.args, got, tt.wantErr)
 			}
 			if cmd.Limit != tt.limit {
 				t.Errorf("parseLast(%q) asks for %d receipts, want %d", tt.args, cmd.Limit, tt.limit)
@@ -288,33 +410,41 @@ func TestParseLast(t *testing.T) {
 
 func TestParseTotal(t *testing.T) {
 	tests := []struct {
-		args   string
-		label  string
-		scope  Scope
-		errSet bool
+		args    string
+		label   string
+		scope   Scope
+		matched bool
+		wantErr string
 	}{
-		{args: "", label: "September 2026", scope: scopeSender},
-		{args: "this month", label: "September 2026", scope: scopeSender},
-		{args: "last month", label: "August 2026", scope: scopeSender},
-		{args: "2026-08", label: "August 2026", scope: scopeSender},
-		{args: "ever", label: "all time", scope: scopeSender},
-		{args: "all", label: "September 2026", scope: scopeEveryone},
-		{args: "all last month", label: "August 2026", scope: scopeEveryone},
-		{args: "last month all", label: "August 2026", scope: scopeEveryone},
-		{args: "last  month", label: "August 2026", scope: scopeSender},
-		{args: "ALL ever", label: "all time", scope: scopeEveryone},
-		{args: "fallout", errSet: true},
-		{args: "2026-99", errSet: true},
+		{args: "", label: "September 2026", scope: scopeSender, matched: true},
+		{args: "this month", label: "September 2026", scope: scopeSender, matched: true},
+		{args: "last month", label: "August 2026", scope: scopeSender, matched: true},
+		{args: "2026-08", label: "August 2026", scope: scopeSender, matched: true},
+		{args: "ever", label: "all time", scope: scopeSender, matched: true},
+		{args: "all", label: "September 2026", scope: scopeEveryone, matched: true},
+		{args: "all last month", label: "August 2026", scope: scopeEveryone, matched: true},
+		{args: "last month all", label: "August 2026", scope: scopeEveryone, matched: true},
+		{args: "last  month", label: "August 2026", scope: scopeSender, matched: true},
+		{args: "ALL ever", label: "all time", scope: scopeEveryone, matched: true},
+		{args: "2026-99", matched: true,
+			wantErr: `I don't know the period "2026-99"; try "last month" or "2026-08"`},
+		{args: "all 2026-99", matched: true,
+			wantErr: `I don't know the period "2026-99"; try "last month" or "2026-08"`},
+		{args: "fallout"},
+		{args: "too much on coffee"},
 	}
 
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("%q", tt.args), func(t *testing.T) {
-			cmd := parseTotal(tt.args, testNow)
+			cmd, matched := parseTotal(tt.args, testNow)
 
-			if (cmd.Err != nil) != tt.errSet {
-				t.Fatalf("parseTotal(%q) gave err %v, want an error: %v", tt.args, cmd.Err, tt.errSet)
+			if matched != tt.matched {
+				t.Fatalf("parseTotal(%q) matched: %v, want %v", tt.args, matched, tt.matched)
 			}
-			if tt.errSet {
+			if got := errText(cmd.Err); got != tt.wantErr {
+				t.Fatalf("parseTotal(%q) answered %q, want %q", tt.args, got, tt.wantErr)
+			}
+			if tt.wantErr != "" || !matched {
 				return
 			}
 			if cmd.Period.Label != tt.label {

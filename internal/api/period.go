@@ -1,7 +1,9 @@
 package api
 
 import (
+	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -22,6 +24,13 @@ const (
 	scopeEveryone
 )
 
+// ErrNotAPeriod reports text that does not name a period at all, as opposed to
+// text shaped like one whose value is wrong. A command relays the first as
+// ordinary chat and answers the second with the error.
+var ErrNotAPeriod = errors.New("not a period")
+
+var monthRe = regexp.MustCompile(`^\d{4}-\d{1,2}$`)
+
 func ParsePeriod(args string, now time.Time) (Period, error) {
 	text := strings.TrimSpace(args)
 
@@ -36,6 +45,10 @@ func ParsePeriod(args string, now time.Time) (Period, error) {
 
 	case "ever":
 		return Period{Label: "all time"}, nil
+	}
+
+	if !monthRe.MatchString(text) {
+		return Period{}, fmt.Errorf("%q: %w", text, ErrNotAPeriod)
 	}
 
 	month, err := time.ParseInLocation("2006-01", text, now.Location())

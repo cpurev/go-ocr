@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"testing"
 	"time"
 )
@@ -21,6 +22,10 @@ func TestParsePeriod(t *testing.T) {
 		to     time.Time
 		label  string
 		errSet bool
+
+		// notAPeriod separates text that names no period from text shaped like
+		// one that holds a wrong value. Only the second is worth a reply.
+		notAPeriod bool
 	}{
 		{
 			name:  "no argument is the month we are in",
@@ -68,14 +73,21 @@ func TestParsePeriod(t *testing.T) {
 			label: "all time",
 		},
 		{
-			name:   "a period that is not a period",
-			args:   "xyzzy",
-			now:    midJanuary,
-			errSet: true,
+			name:       "a period that is not a period",
+			args:       "xyzzy",
+			now:        midJanuary,
+			errSet:     true,
+			notAPeriod: true,
 		},
 		{
 			name:   "a month that does not exist",
 			args:   "2026-13",
+			now:    midJanuary,
+			errSet: true,
+		},
+		{
+			name:   "a month written with one digit",
+			args:   "2026-8",
 			now:    midJanuary,
 			errSet: true,
 		},
@@ -87,6 +99,9 @@ func TestParsePeriod(t *testing.T) {
 
 			if (err != nil) != tt.errSet {
 				t.Fatalf("ParsePeriod(%q) gave err %v, want an error: %v", tt.args, err, tt.errSet)
+			}
+			if got := errors.Is(err, ErrNotAPeriod); got != tt.notAPeriod {
+				t.Fatalf("ParsePeriod(%q) names no period: %v, want %v", tt.args, got, tt.notAPeriod)
 			}
 			if tt.errSet {
 				return
