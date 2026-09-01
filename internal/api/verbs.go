@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"strings"
+	"time"
 )
 
 // need is the set of optional dependencies a verb cannot run without.
@@ -22,7 +23,7 @@ type verb struct {
 	// Usage is the line help prints and the suggestion a parse error carries.
 	Usage string
 
-	Parse func(args string) Command
+	Parse func(args string, now time.Time) Command
 	Run   func(*Server, context.Context, request) string
 }
 
@@ -45,6 +46,11 @@ var verbs = []verb{
 	{Name: "last", Aliases: []string{"recent"}, Needs: needsReceipts, Audience: audienceSender,
 		Usage: "last, last 5",
 		Parse: parseLast, Run: (*Server).lastReply},
+
+	{Name: "total", Aliases: []string{"sum", "spent"}, Needs: needsReceipts,
+		Audience: audienceSender,
+		Usage:    "total, total last month, total 2026-08, total all, total ever",
+		Parse:    parseTotal, Run: (*Server).totalReply},
 
 	{Name: "edit", Needs: needsReceipts, Audience: audienceEveryone,
 		Usage: "edit 7 merchant: ICA, or edit total: 154.53 for the newest",

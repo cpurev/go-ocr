@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/cpurev/go-ocr/internal/model"
 )
@@ -16,6 +17,9 @@ type Command struct {
 	Limit int
 
 	Update model.ReceiptUpdate
+
+	Period Period
+	Scope  Scope
 
 	Err error
 }
@@ -29,7 +33,7 @@ var (
 
 // parseCommand takes the leading run of letters as the verb word. A text with
 // no leading letter is its own word, which is what lets "?" be an alias.
-func parseCommand(text string) (*verb, Command, bool) {
+func parseCommand(text string, now time.Time) (*verb, Command, bool) {
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {
 		return nil, Command{}, false
@@ -50,21 +54,21 @@ func parseCommand(text string) (*verb, Command, bool) {
 		return nil, Command{}, false
 	}
 
-	return v, v.Parse(args), true
+	return v, v.Parse(args, now), true
 }
 
 func isLetter(b byte) bool {
 	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
 }
 
-func noArgs(string) Command { return Command{} }
+func noArgs(string, time.Time) Command { return Command{} }
 
 const (
 	defaultRecent = 5
 	maxRecent     = 20
 )
 
-func parseLast(args string) Command {
+func parseLast(args string, _ time.Time) Command {
 	args = strings.TrimSpace(args)
 	if args == "" {
 		return Command{Limit: defaultRecent}
@@ -81,7 +85,7 @@ func parseLast(args string) Command {
 	return Command{Limit: howMany}
 }
 
-func parseEdit(args string) Command {
+func parseEdit(args string, _ time.Time) Command {
 	number, tail := 0, args
 
 	if m := editNumberRe.FindStringSubmatchIndex(args); m != nil {
@@ -106,7 +110,7 @@ func parseEdit(args string) Command {
 
 // A wrong edit is repairable and a wrong delete is not, so the destructive verb
 // is the one that pays for aim.
-func parseDelete(args string) Command {
+func parseDelete(args string, _ time.Time) Command {
 	m := editNumberRe.FindStringSubmatchIndex(args)
 	if m == nil || strings.TrimSpace(args[m[1]:]) != "" {
 		return Command{Err: errors.New("which receipt? name its number")}
@@ -118,6 +122,41 @@ func parseDelete(args string) Command {
 	}
 
 	return Command{Number: number}
+}
+
+func parseTotal(args string, now time.Time) Command {
+	// The rejoined remainder is used either way, so "total last  month" parses
+	// the same as "total all last  month" rather than only the latter.
+	rest, everyone := stripToken(args, "all")
+
+	scope := scopeSender
+	if everyone {
+		scope = scopeEveryone
+	}
+
+	period, err := ParsePeriod(rest, now)
+	if err != nil {
+		return Command{Err: err}
+	}
+
+	return Command{Period: period, Scope: scope}
+}
+
+// stripToken removes a whole word, so the "all" inside "fallout" is left where
+// it is and reaches ParsePeriod as part of the period.
+func stripToken(args, token string) (string, bool) {
+	fields := strings.Fields(args)
+	kept, found := make([]string, 0, len(fields)), false
+
+	for _, f := range fields {
+		if strings.EqualFold(f, token) {
+			found = true
+			continue
+		}
+		kept = append(kept, f)
+	}
+
+	return strings.Join(kept, " "), found
 }
 
 func parseFields(tail string) (model.ReceiptUpdate, error) {

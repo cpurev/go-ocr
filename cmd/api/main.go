@@ -12,6 +12,10 @@ import (
 	"syscall"
 	"time"
 
+	// The Alpine runtime image ships no zoneinfo, so APP_TIMEZONE would fail to
+	// load at boot without this embedded copy.
+	_ "time/tzdata"
+
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 	"go.mongodb.org/mongo-driver/v2/mongo/readpref"

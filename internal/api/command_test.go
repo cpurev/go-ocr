@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cpurev/go-ocr/internal/model"
 )
@@ -36,6 +37,10 @@ func showUpdate(u model.ReceiptUpdate) string {
 	}
 	return strings.TrimSpace(b.String())
 }
+
+// testNow is the clock every parser test reads. UTC keeps it independent of the
+// machine's zoneinfo, which the api package does not embed.
+var testNow = time.Date(2026, time.September, 15, 12, 0, 0, 0, time.UTC)
 
 func TestParseCommand(t *testing.T) {
 	tests := []struct {
@@ -85,6 +90,12 @@ func TestParseCommand(t *testing.T) {
 		{text: "rm 7", verb: "delete", number: 7},
 		{text: "delete", verb: "delete", errSet: true},
 
+		{text: "total", verb: "total"},
+		{text: "sum", verb: "total"},
+		{text: "spent", verb: "total"},
+		{text: "total last month", verb: "total"},
+		{text: "total xyzzy", verb: "total", errSet: true},
+
 		{text: ""},
 		{text: "   "},
 		{text: "picking up milk"},
@@ -92,7 +103,7 @@ func TestParseCommand(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("%q", tt.text), func(t *testing.T) {
-			v, cmd, ok := parseCommand(tt.text)
+			v, cmd, ok := parseCommand(tt.text, testNow)
 
 			if tt.verb == "" {
 				if ok {
@@ -125,7 +136,7 @@ func TestParseCommand(t *testing.T) {
 
 func TestParseEditFindsTheReceiptNumber(t *testing.T) {
 	for _, args := range []string{"7 merchant: ICA", "#7 merchant: ICA", "  #  7 merchant: ICA"} {
-		cmd := parseEdit(args)
+		cmd := parseEdit(args, testNow)
 
 		if cmd.Err != nil {
 			t.Errorf("parseEdit(%q) failed with %v", args, cmd.Err)
@@ -158,7 +169,7 @@ func TestParseDelete(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("%q", tt.args), func(t *testing.T) {
-			cmd := parseDelete(tt.args)
+			cmd := parseDelete(tt.args, testNow)
 
 			if (cmd.Err != nil) != tt.errSet {
 				t.Fatalf("parseDelete(%q) gave err %v, want an error: %v", tt.args, cmd.Err, tt.errSet)
@@ -180,6 +191,52 @@ func TestNoVerbWordIsRegisteredTwice(t *testing.T) {
 				continue
 			}
 			owner[word] = v.Name
+		}
+	}
+}
+
+// A capital in a Name or Alias would never match, because parseCommand
+// lowercases the word before the index lookup.
+func TestEveryVerbWordIsLowercase(t *testing.T) {
+	for _, v := range verbs {
+		for _, word := range append([]string{v.Name}, v.Aliases...) {
+			if word != strings.ToLower(word) {
+				t.Errorf("the %q verb registers %q, which no message can ever match: "+
+					"parseCommand lowercases the word before looking it up", v.Name, word)
+			}
+		}
+	}
+}
+
+func TestEveryVerbAnswersTheRightAudience(t *testing.T) {
+	names := map[Audience]string{
+		audienceSender: "the sender", audienceEveryone: "everyone", audienceOthers: "the others",
+	}
+	want := map[string]Audience{
+		"help":   audienceEveryone,
+		"who":    audienceSender,
+		"stores": audienceEveryone,
+		"last":   audienceSender,
+		"total":  audienceSender,
+		"edit":   audienceEveryone,
+		"delete": audienceEveryone,
+	}
+
+	if len(verbs) != len(want) {
+		t.Fatalf("the table has %d verbs and this test names %d; a new verb has to say "+
+			"who sees its answer", len(verbs), len(want))
+	}
+
+	for _, v := range verbs {
+		expected, named := want[v.Name]
+		if !named {
+			t.Errorf("the %q verb is not named here, so nothing pins who sees its answer", v.Name)
+			continue
+		}
+		if v.Audience != expected {
+			t.Errorf("the %q verb answers %s, want %s: a query must not buzz the other "+
+				"phone, and anything that changed shared state must",
+				v.Name, names[v.Audience], names[expected])
 		}
 	}
 }
@@ -217,13 +274,54 @@ func TestParseLast(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("%q", tt.args), func(t *testing.T) {
-			cmd := parseLast(tt.args)
+			cmd := parseLast(tt.args, testNow)
 
 			if (cmd.Err != nil) != tt.errSet {
 				t.Fatalf("parseLast(%q) gave err %v, want an error: %v", tt.args, cmd.Err, tt.errSet)
 			}
 			if cmd.Limit != tt.limit {
 				t.Errorf("parseLast(%q) asks for %d receipts, want %d", tt.args, cmd.Limit, tt.limit)
+			}
+		})
+	}
+}
+
+func TestParseTotal(t *testing.T) {
+	tests := []struct {
+		args   string
+		label  string
+		scope  Scope
+		errSet bool
+	}{
+		{args: "", label: "September 2026", scope: scopeSender},
+		{args: "this month", label: "September 2026", scope: scopeSender},
+		{args: "last month", label: "August 2026", scope: scopeSender},
+		{args: "2026-08", label: "August 2026", scope: scopeSender},
+		{args: "ever", label: "all time", scope: scopeSender},
+		{args: "all", label: "September 2026", scope: scopeEveryone},
+		{args: "all last month", label: "August 2026", scope: scopeEveryone},
+		{args: "last month all", label: "August 2026", scope: scopeEveryone},
+		{args: "last  month", label: "August 2026", scope: scopeSender},
+		{args: "ALL ever", label: "all time", scope: scopeEveryone},
+		{args: "fallout", errSet: true},
+		{args: "2026-99", errSet: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("%q", tt.args), func(t *testing.T) {
+			cmd := parseTotal(tt.args, testNow)
+
+			if (cmd.Err != nil) != tt.errSet {
+				t.Fatalf("parseTotal(%q) gave err %v, want an error: %v", tt.args, cmd.Err, tt.errSet)
+			}
+			if tt.errSet {
+				return
+			}
+			if cmd.Period.Label != tt.label {
+				t.Errorf("parseTotal(%q) covers %q, want %q", tt.args, cmd.Period.Label, tt.label)
+			}
+			if cmd.Scope != tt.scope {
+				t.Errorf("parseTotal(%q) has scope %d, want %d", tt.args, cmd.Scope, tt.scope)
 			}
 		})
 	}

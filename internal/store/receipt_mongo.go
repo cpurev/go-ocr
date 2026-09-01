@@ -1,11 +1,13 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"log/slog"
 	"regexp"
+	"slices"
 	"time"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -328,6 +330,97 @@ func (m *MongoReceipts) ListRecentReceipts(ctx context.Context, limit int) ([]mo
 	}
 
 	return receipts, nil
+}
+
+func (m *MongoReceipts) SumReceipts(ctx context.Context, q TotalQuery) ([]CurrencyTotal, error) {
+	// One over the limit tells a full page from an overflowing one. The
+	// projection cuts the decode to the three fields the fold reads, because
+	// rawText runs to 50k runes and maxTotalReceipts of those would drag half a
+	// gigabyte through a single reply.
+	cursor, err := m.coll.Find(ctx, buildTotalQuery(q), options.Find().
+		SetLimit(maxTotalReceipts+1).
+		SetProjection(bson.D{
+			{Key: "currency", Value: 1},
+			{Key: "total", Value: 1},
+			{Key: "date", Value: 1},
+		}))
+	if err != nil {
+		return nil, fmt.Errorf("mongo: totalling receipts: %w", err)
+	}
+	defer cursor.Close(ctx)
+
+	var docs []receiptDocument
+	if err := cursor.All(ctx, &docs); err != nil {
+		return nil, fmt.Errorf("mongo: decoding receipts to total: %w", err)
+	}
+
+	return sumByCurrency(docs)
+}
+
+// sumByCurrency is kept pure so the arithmetic and the refusal boundary can be
+// exercised without a live Mongo.
+func sumByCurrency(docs []receiptDocument) ([]CurrencyTotal, error) {
+	if len(docs) > maxTotalReceipts {
+		return nil, ErrTooManyReceipts
+	}
+
+	byCurrency := make(map[string]CurrencyTotal, 4)
+	for _, doc := range docs {
+		t := byCurrency[doc.Currency]
+		t.Currency = doc.Currency
+		t.Total += doc.Total
+		t.Count++
+		if doc.Date == "" {
+			t.Undated++
+		}
+		byCurrency[doc.Currency] = t
+	}
+
+	totals := make([]CurrencyTotal, 0, len(byCurrency))
+	for _, t := range byCurrency {
+		t.Total = model.RoundMoney(t.Total)
+		totals = append(totals, t)
+	}
+
+	slices.SortFunc(totals, func(a, b CurrencyTotal) int {
+		if c := cmp.Compare(b.Total, a.Total); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.Currency, b.Currency)
+	})
+
+	return totals, nil
+}
+
+// buildTotalQuery keeps a receipt OCR could not date inside its month by falling
+// back to when it arrived. `date` is stored as "" rather than left out, so the
+// undated branch is an equality and not an $exists test.
+func buildTotalQuery(q TotalQuery) bson.D {
+	query := bson.D{}
+	if q.UserID != "" {
+		query = append(query, bson.E{Key: "userId", Value: q.UserID})
+	}
+
+	printed, arrived := bson.D{}, bson.D{}
+	if !q.From.IsZero() {
+		printed = append(printed, bson.E{Key: "$gte", Value: q.From.Format(model.DateLayout)})
+		arrived = append(arrived, bson.E{Key: "$gte", Value: q.From})
+	}
+	if !q.To.IsZero() {
+		printed = append(printed, bson.E{Key: "$lt", Value: q.To.Format(model.DateLayout)})
+		arrived = append(arrived, bson.E{Key: "$lt", Value: q.To})
+	}
+	if len(printed) == 0 {
+		return query
+	}
+
+	return append(query, bson.E{Key: "$or", Value: bson.A{
+		bson.D{{Key: "date", Value: printed}},
+		bson.D{
+			{Key: "date", Value: ""},
+			{Key: "createdAt", Value: arrived},
+		},
+	}})
 }
 
 func buildReceiptQuery(f ReceiptFilter) bson.D {

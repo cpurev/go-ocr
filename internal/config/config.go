@@ -12,8 +12,9 @@ import (
 )
 
 type Config struct {
-	Env  string
-	Addr string
+	Env      string
+	Addr     string
+	Timezone *time.Location
 
 	ReadTimeout     time.Duration
 	WriteTimeout    time.Duration
@@ -122,6 +123,12 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	// Stockholm rather than UTC because the receipts are Swedish. A UTC month
+	// boundary would misfile anything bought in the first hours of the 1st.
+	if cfg.Timezone, err = getLocation("APP_TIMEZONE", "Europe/Stockholm"); err != nil {
+		return Config{}, err
+	}
+
 	if cfg.WriteTimeout <= cfg.RequestTimeout {
 		return Config{}, fmt.Errorf(
 			"config: WRITE_TIMEOUT (%s) must be greater than REQUEST_TIMEOUT (%s)",
@@ -142,6 +149,14 @@ func Load() (Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// Location falls back to UTC so a zero Config cannot panic inside time.In.
+func (c Config) Location() *time.Location {
+	if c.Timezone == nil {
+		return time.UTC
+	}
+	return c.Timezone
 }
 
 func (c Config) MongoURISafe() string {
@@ -186,6 +201,17 @@ func getStringSlice(key string) []string {
 	}
 
 	return out
+}
+
+func getLocation(key, fallback string) (*time.Location, error) {
+	name := getString(key, fallback)
+
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		return nil, fmt.Errorf("config: invalid %s=%q: %w", key, name, err)
+	}
+
+	return loc, nil
 }
 
 func getDuration(key string, fallback time.Duration) (time.Duration, error) {

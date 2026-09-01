@@ -12,6 +12,30 @@ import (
 
 var ErrDuplicate = errors.New("store: record already exists")
 
+var ErrTooManyReceipts = errors.New("store: too many receipts to total")
+
+// If the volume assumption behind summing in Go is ever wrong, the answer is a
+// refusal rather than a quietly truncated sum.
+const maxTotalReceipts = 10_000
+
+type CurrencyTotal struct {
+	Currency string
+	Total    float64
+	Count    int
+
+	// Undated counts receipts included by createdAt because OCR found no date
+	// on them, so a surprising total can be explained.
+	Undated int
+}
+
+// TotalQuery selects the receipts a total covers. The range is half-open,
+// [From, To), and a zero time means unbounded. An empty UserID means everyone.
+type TotalQuery struct {
+	UserID string
+	From   time.Time
+	To     time.Time
+}
+
 type ReceiptFilter struct {
 	Merchant string
 	UserID   string
@@ -91,6 +115,10 @@ type ReceiptStore interface {
 	UpdateReceipt(ctx context.Context, id string, update model.ReceiptUpdate) (model.Receipt, error)
 
 	DeleteReceipt(ctx context.Context, id string) error
+
+	// SumReceipts totals per currency. A receipt OCR could not date is dated by
+	// createdAt so it cannot fall out of a month.
+	SumReceipts(ctx context.Context, q TotalQuery) ([]CurrencyTotal, error)
 }
 
 type StoreDirectory interface {

@@ -256,12 +256,14 @@ The POST handler defends itself in the order the code runs. It reads the raw
 body first, because the `X-Hub-Signature-256` HMAC covers the exact bytes.
 It checks the signature second, computed with the app secret and compared in
 constant time with `hmac.Equal`; without that check anyone who found the URL
-could inject fake receipts. Then it acknowledges fast and works in the
-background: Meta disables webhooks that answer slowly and OCR takes seconds, so
-the handler returns 200 immediately and each image is ingested in its own
-goroutine with its own timeout budget. Redeliveries are harmless, since the
-unique index on `whatsappMediaId` turns a retry into a logged duplicate rather
-than a second record.
+could inject fake receipts. Then it does the work inline and answers when the
+work is done. Cloud Run throttles CPU once the response is written, so a
+background goroutine would be starved mid-OCR; the handler therefore holds the
+request open. That makes it slower than Meta's webhook timeout, which means
+redeliveries are the normal path rather than the exception. `handleOnce` claims
+each message id before working and turns a retry into a logged no-op, and the
+unique index on `whatsappMediaId` stops a raced claim from storing the same
+receipt twice.
 
 With `WHATSAPP_PHONE_NUMBER_ID` set, every image gets a reply in the same chat
 with what was extracted, so a bad parse shows up on your phone immediately
@@ -282,6 +284,39 @@ Failures answer too, and say what to do about them: an expired media id asks for
 the photo again, an unreadable image asks for better light. Sending needs no
 message templates, because a reply always lands inside WhatsApp's 24-hour
 customer service window.
+
+### Commands
+
+Any text message whose first word names a verb is a command. Everything else is
+relayed to the other participants as ordinary chat.
+
+| Command | Answers with | Who sees the answer |
+| ------- | ------------ | ------------------- |
+| `help`, `?`, `commands` | what the bot understands | everyone |
+| `who`, `relay` | the numbers on the relay | the asker |
+| `stores`, `shops`, `merchants` | the shops it has learned | everyone |
+| `last`, `last 5`, `recent` | the newest receipts, by when they arrived | the asker |
+| `total`, `sum`, `spent`, `total last month`, `total 2026-08`, `total all`, `total ever` | per-currency sums for one month | the asker |
+| `edit 7 merchant: ICA` | the receipt after the change | everyone |
+| `delete 7`, `remove 7`, `rm 7` | the full contents of what vanished | everyone |
+
+Queries answer only the phone that asked, so one person checking their own total
+does not buzz the other's. Anything that changed shared state answers both, and
+so does `help`, because two people sharing a relay should see the same rules. A
+parse error and a missing dependency always go to the sender alone. A grammar
+nag is between the bot and whoever typed it.
+
+`total` covers the month containing today unless the message names another, and
+draws month boundaries in the zone `APP_TIMEZONE` sets. It reports one line per
+currency rather than one number, since adding SEK to EUR would be a lie. A
+receipt OCR could not date is counted by when it arrived rather than dropped
+from the month, and the reply says how many went in that way. `total all` counts
+everyone on the relay instead of just the asker.
+
+`delete` demands a number and refuses anything after it, where `edit` accepts a
+message with neither. A wrong edit is repairable and a wrong delete is not. The
+echo of what vanished is the only backup a deleted receipt gets, which is why it
+goes to both phones and prints the whole receipt.
 
 ### Correcting a receipt
 
@@ -325,8 +360,9 @@ before the insert, so the stored record is right the first time. When both OCR
 and the directory have an opinion, `STORE_OVERRIDES_OCR` decides; the default
 keeps the parsed name and lets the directory fill only a blank.
 
-Text that is not a command is acknowledged and logged by shape only, never by
-content. At scale, replace the per-image goroutine with a real queue.
+Text that is not a command is relayed to the other participants and logged by
+shape only, never by content. At scale, move ingestion onto a real queue and
+answer the webhook from the queue's acknowledgement instead of from the work.
 
 The stored document uses camelCase keys (`whatsappMediaId`, `lineItems`,
 `createdAt`). `date` is stored as a `YYYY-MM-DD` string rather than a BSON date,
@@ -378,8 +414,10 @@ Everything is optional. Each integration boots only when its variable is set:
 | `WHATSAPP_VERIFY_TOKEN`     | *(unset)*      | your invented string for the webhook handshake |
 | `WHATSAPP_APP_SECRET`       | *(unset)*      | Meta app secret; verifies webhook signatures |
 | `WHATSAPP_PHONE_NUMBER_ID`  | *(unset)*      | business number id replies are sent from; without it receipts are ingested silently |
+| `WHATSAPP_RELAY_NUMBERS`    | *(unset)*      | comma-separated participants; unset answers anyone, set is an allowlist that also fans replies out |
 | `MONGO_STORES_COLLECTION`   | `stores`       | the learned registration-number to merchant directory |
 | `MONGO_COUNTERS_COLLECTION` | `counters`     | sequence counters; what gives each receipt its short number |
+| `MONGO_CLAIMS_COLLECTION`   | `claims`       | message-id claims; what makes a Meta redelivery a no-op |
 | `STORE_OVERRIDES_OCR`       | `false`        | `true` lets a learned merchant beat the OCR-read one; `false` fills only a blank |
 | `WHATSAPP_TIMEOUT`          | `20s`          | budget for the two media calls             |
 | `MEDIA_MAX_BYTES`           | `10MB`         | max image size (accepts `10MB`, `512KB`)   |
@@ -390,6 +428,7 @@ Everything is optional. Each integration boots only when its variable is set:
 | `RECEIPT_DEFAULT_CURRENCY`  | `USD`          | used when the receipt shows no symbol      |
 | `DOTENV_PATH`               | `.env`         | where to look for the env file             |
 | `APP_ENV`                   | `development`  | text logs locally, JSON otherwise          |
+| `APP_TIMEZONE`              | `Europe/Stockholm` | the zone `total` draws month boundaries in |
 | `APP_ADDR`                  | `:8080`        | bind address                               |
 | `READ_TIMEOUT`              | `5s`           | max time to read a request                 |
 | `WRITE_TIMEOUT`             | `75s`          | max time to write a response               |

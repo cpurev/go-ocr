@@ -24,7 +24,7 @@ type request struct {
 func (s *Server) replyToText(ctx context.Context, txt whatsapp.InboundText) Reply {
 	sender := relay.Normalize(txt.From)
 
-	v, cmd, ok := parseCommand(txt.Body)
+	v, cmd, ok := parseCommand(txt.Body, time.Now().In(s.cfg.Location()))
 	if !ok {
 		s.logger.Info("webhook text message was not a command",
 			"from", txt.From, "message_id", txt.MessageID, "body_bytes", len(txt.Body))
@@ -186,6 +186,47 @@ func (s *Server) editReply(ctx context.Context, req request) string {
 	learned := s.teachStore(ctx, existing, req.Cmd.Update)
 
 	return formatEditReply(updated, learned)
+}
+
+func (s *Server) totalReply(ctx context.Context, req request) string {
+	q := store.TotalQuery{From: req.Cmd.Period.From, To: req.Cmd.Period.To}
+	if req.Cmd.Scope == scopeSender {
+		q.UserID = req.Sender
+	}
+
+	totals, err := s.deps.Receipts.SumReceipts(ctx, q)
+	if errors.Is(err, store.ErrTooManyReceipts) {
+		return "That's more receipts than I can add up at once. Try a single month."
+	}
+	if err != nil {
+		s.logger.Error("totalling receipts", "period", req.Cmd.Period.Label, "error", err)
+		return "Something went wrong adding up your receipts. Please try again."
+	}
+	if len(totals) == 0 {
+		return fmt.Sprintf("I have no receipts for %s.", req.Cmd.Period.Label)
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "*Total for %s", req.Cmd.Period.Label)
+	if req.Cmd.Scope == scopeEveryone {
+		b.WriteString(", everyone")
+	}
+	b.WriteString("*\n\n")
+
+	for _, t := range totals {
+		noun := "receipts"
+		if t.Count == 1 {
+			noun = "receipt"
+		}
+
+		fmt.Fprintf(&b, "%.2f %s (%d %s", t.Total, t.Currency, t.Count, noun)
+		if t.Undated > 0 {
+			fmt.Fprintf(&b, ", %d dated by when I got them", t.Undated)
+		}
+		b.WriteString(")\n")
+	}
+
+	return b.String()
 }
 
 func (s *Server) deleteReply(ctx context.Context, req request) string {

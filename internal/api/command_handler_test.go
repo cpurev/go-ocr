@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cpurev/go-ocr/internal/config"
 	"github.com/cpurev/go-ocr/internal/model"
@@ -259,5 +260,88 @@ func TestDeleteReplyWhenThereIsNoSuchReceipt(t *testing.T) {
 	got := srv.deleteReply(context.Background(), request{Sender: alice, Cmd: Command{Number: 7}})
 	if want := "I don't have a receipt #7."; got != want {
 		t.Errorf("delete replied %q, want %q", got, want)
+	}
+}
+
+func TestTotalReply(t *testing.T) {
+	september := Period{
+		From:  time.Date(2026, time.September, 1, 0, 0, 0, 0, time.UTC),
+		To:    time.Date(2026, time.October, 1, 0, 0, 0, 0, time.UTC),
+		Label: "September 2026",
+	}
+
+	tests := []struct {
+		name   string
+		scope  Scope
+		totals []store.CurrencyTotal
+		err    error
+		want   string
+	}{
+		{
+			name:   "one receipt is singular",
+			totals: []store.CurrencyTotal{{Currency: "SEK", Total: 154.53, Count: 1}},
+			want:   "*Total for September 2026*\n\n154.53 SEK (1 receipt)\n",
+		},
+		{
+			name: "currencies are listed apart and only the undated one explains itself",
+			totals: []store.CurrencyTotal{
+				{Currency: "SEK", Total: 1240.50, Count: 12, Undated: 2},
+				{Currency: "EUR", Total: 89, Count: 1},
+			},
+			want: "*Total for September 2026*\n\n" +
+				"1240.50 SEK (12 receipts, 2 dated by when I got them)\n" +
+				"89.00 EUR (1 receipt)\n",
+		},
+		{
+			name:   "everyone says so in the header",
+			scope:  scopeEveryone,
+			totals: []store.CurrencyTotal{{Currency: "SEK", Total: 89, Count: 2}},
+			want:   "*Total for September 2026, everyone*\n\n89.00 SEK (2 receipts)\n",
+		},
+		{
+			name: "nothing in that month",
+			want: "I have no receipts for September 2026.",
+		},
+		{
+			name: "more receipts than one total can hold",
+			err:  store.ErrTooManyReceipts,
+			want: "That's more receipts than I can add up at once. Try a single month.",
+		},
+		{
+			name: "store outage",
+			err:  errors.New("mongo is unreachable"),
+			want: "Something went wrong adding up your receipts. Please try again.",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var asked store.TotalQuery
+			receipts := &fakeReceipts{
+				sumReceipts: func(_ context.Context, q store.TotalQuery) ([]store.CurrencyTotal, error) {
+					asked = q
+					return tt.totals, tt.err
+				},
+			}
+			srv := newCommandServer(t, nil, receipts)
+
+			got := srv.totalReply(context.Background(),
+				request{Sender: alice, Cmd: Command{Period: september, Scope: tt.scope}})
+			if got != tt.want {
+				t.Errorf("total replied %q, want %q", got, tt.want)
+			}
+
+			wantUser := alice
+			if tt.scope == scopeEveryone {
+				wantUser = ""
+			}
+			if asked.UserID != wantUser {
+				t.Errorf("total asked the store for user %q, want %q", asked.UserID, wantUser)
+			}
+			if !asked.From.Equal(september.From) || !asked.To.Equal(september.To) {
+				t.Errorf("total asked the store for [%s, %s), want [%s, %s)",
+					asked.From, asked.To, september.From, september.To)
+			}
+		})
 	}
 }
