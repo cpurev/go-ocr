@@ -287,8 +287,13 @@ customer service window.
 
 ### Commands
 
-Any text message whose first word names a verb is a command. Everything else is
-relayed to the other participants as ordinary chat.
+A text message is a command when its first word names a verb *and* the rest of
+the message parses as that verb's arguments. Everything else is relayed to the
+other participants as ordinary chat, so `who is coming tonight` reaches the other
+phone instead of printing the roster, and `spent too much today` reaches it
+instead of arguing about periods. A verb whose arguments parse but carry a wrong
+value still answers the sender: `edit 7 total: abc` says the total is not a
+number rather than forwarding silently.
 
 | Command | Answers with | Who sees the answer |
 | ------- | ------------ | ------------------- |
@@ -313,10 +318,10 @@ receipt OCR could not date is counted by when it arrived rather than dropped
 from the month, and the reply says how many went in that way. `total all` counts
 everyone on the relay instead of just the asker.
 
-`delete` demands a number and refuses anything after it, where `edit` accepts a
-message with neither. A wrong edit is repairable and a wrong delete is not. The
-echo of what vanished is the only backup a deleted receipt gets, which is why it
-goes to both phones and prints the whole receipt.
+`delete` demands a number and refuses anything after it, where `edit` takes a
+number, a list of fields, or both. A wrong edit is repairable and a wrong delete
+is not. The echo of what vanished is the only backup a deleted receipt gets,
+which is why it goes to both phones and prints the whole receipt.
 
 ### Correcting a receipt
 
