@@ -42,6 +42,10 @@ func replyAll(sender, body string) Reply {
 	return Reply{Sender: sender, Audience: audienceEveryone, Body: body}
 }
 
+func replyToSender(sender, body string) Reply {
+	return Reply{Sender: sender, Audience: audienceSender, Body: body}
+}
+
 func relayOthers(sender, body string) Reply {
 	return Reply{Sender: sender, Audience: audienceOthers, Body: body}
 }

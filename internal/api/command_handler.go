@@ -16,51 +16,66 @@ import (
 
 const commandTimeout = 20 * time.Second
 
+type request struct {
+	Sender string // normalized digits
+	Cmd    Command
+}
+
 func (s *Server) replyToText(ctx context.Context, txt whatsapp.InboundText) Reply {
 	sender := relay.Normalize(txt.From)
 
-	cmd := ParseCommand(txt.Body)
-	if cmd.Kind == CommandNone {
+	v, cmd, ok := parseCommand(txt.Body)
+	if !ok {
 		s.logger.Info("webhook text message was not a command",
 			"from", txt.From, "message_id", txt.MessageID, "body_bytes", len(txt.Body))
 
 		return relayOthers(sender, txt.Body)
 	}
 
+	// A parse error and a missing dependency are between the bot and whoever
+	// typed, so they go to the sender alone whatever the verb's row broadcasts.
+	if missing := s.missing(v.Needs); missing != "" {
+		return replyToSender(sender, missing)
+	}
+	if cmd.Err != nil {
+		return replyToSender(sender,
+			fmt.Sprintf("I couldn't read that: %s\n\nTry: %s", cmd.Err, v.Usage))
+	}
+
 	ctx, cancel := context.WithTimeout(ctx, commandTimeout)
 	defer cancel()
 
-	var reply string
-	switch cmd.Kind {
-	case CommandHelp:
-		reply = HelpText
-	case CommandStores:
-		reply = s.listStoresReply(ctx)
-	case CommandEdit:
-		reply = s.editReceiptReply(ctx, cmd)
+	return Reply{
+		Sender:   sender,
+		Audience: v.Audience,
+		Body:     v.Run(s, ctx, request{Sender: sender, Cmd: cmd}),
 	}
-
-	return replyAll(sender, reply)
 }
 
-func (s *Server) editReceiptReply(ctx context.Context, cmd Command) string {
-	if cmd.Err != nil {
-		return fmt.Sprintf("I couldn't read that edit: %s\n\nTry: edit 7 merchant: ICA", cmd.Err)
+// missing names the dependency a verb needs and this deployment does not have.
+func (s *Server) missing(n need) string {
+	if n&needsReceipts != 0 && s.deps.Receipts == nil {
+		return "That needs the database, which isn't configured on this server."
 	}
-	if s.deps.Receipts == nil {
-		return "Editing needs the database, which isn't configured on this server."
+	if n&needsStores != 0 && s.deps.Stores == nil {
+		return "The store directory isn't configured on this server."
 	}
+	return ""
+}
 
-	existing, err := s.deps.Receipts.GetReceiptByNumber(ctx, cmd.Number)
+func (s *Server) helpReply(ctx context.Context, req request) string { return helpText }
+
+func (s *Server) editReply(ctx context.Context, req request) string {
+	existing, err := s.deps.Receipts.GetReceiptByNumber(ctx, req.Cmd.Number)
 	if errors.Is(err, store.ErrNotFound) {
-		return fmt.Sprintf("I don't have a receipt #%d.", cmd.Number)
+		return fmt.Sprintf("I don't have a receipt #%d.", req.Cmd.Number)
 	}
 	if err != nil {
-		s.logger.Error("looking up receipt for edit", "number", cmd.Number, "error", err)
+		s.logger.Error("looking up receipt for edit", "number", req.Cmd.Number, "error", err)
 		return "Something went wrong finding that receipt. Please try again."
 	}
 
-	if problems := cmd.Update.Validate(); len(problems) > 0 {
+	if problems := req.Cmd.Update.Validate(); len(problems) > 0 {
 		var b strings.Builder
 		b.WriteString("That edit isn't valid:\n")
 		for field, problem := range problems {
@@ -69,12 +84,12 @@ func (s *Server) editReceiptReply(ctx context.Context, cmd Command) string {
 		return b.String()
 	}
 
-	updated, err := s.deps.Receipts.UpdateReceipt(ctx, existing.ID, cmd.Update)
+	updated, err := s.deps.Receipts.UpdateReceipt(ctx, existing.ID, req.Cmd.Update)
 	if errors.Is(err, store.ErrNotFound) {
-		return fmt.Sprintf("I don't have a receipt #%d.", cmd.Number)
+		return fmt.Sprintf("I don't have a receipt #%d.", req.Cmd.Number)
 	}
 	if err != nil {
-		s.logger.Error("updating receipt", "number", cmd.Number, "error", err)
+		s.logger.Error("updating receipt", "number", req.Cmd.Number, "error", err)
 		return "Something went wrong saving that edit. Please try again."
 	}
 
@@ -82,7 +97,7 @@ func (s *Server) editReceiptReply(ctx context.Context, cmd Command) string {
 		"number", updated.Number, "receipt_id", updated.ID,
 		"merchant", updated.Merchant, "total", updated.Total)
 
-	learned := s.teachStore(ctx, existing, cmd.Update)
+	learned := s.teachStore(ctx, existing, req.Cmd.Update)
 
 	return formatEditReply(updated, learned)
 }
@@ -114,11 +129,7 @@ func (s *Server) teachStore(ctx context.Context, existing model.Receipt, update 
 	return merchant
 }
 
-func (s *Server) listStoresReply(ctx context.Context) string {
-	if s.deps.Stores == nil {
-		return "The store directory isn't configured on this server."
-	}
-
+func (s *Server) storesReply(ctx context.Context, req request) string {
 	stores, err := s.deps.Stores.ListStores(ctx)
 	if err != nil {
 		s.logger.Error("listing stores", "error", err)

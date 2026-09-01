@@ -1,0 +1,91 @@
+package api
+
+import (
+	"context"
+	"strings"
+)
+
+// need is the set of optional dependencies a verb cannot run without.
+type need uint8
+
+const (
+	needsReceipts need = 1 << iota
+	needsStores
+)
+
+type verb struct {
+	Name     string
+	Aliases  []string
+	Needs    need
+	Audience Audience
+
+	// Usage is the line help prints and the suggestion a parse error carries.
+	Usage string
+
+	Parse func(args string) Command
+	Run   func(*Server, context.Context, request) string
+}
+
+// verbs is the whole command set. Run returns a string rather than a Reply so
+// that an executor cannot contradict the Audience its own row declares.
+var verbs = []verb{
+	{Name: "help", Aliases: []string{"?", "commands"}, Audience: audienceEveryone,
+		Usage: "help, what I understand",
+		Parse: noArgs, Run: (*Server).helpReply},
+
+	{Name: "stores", Aliases: []string{"shops", "merchants"}, Needs: needsStores,
+		Audience: audienceEveryone,
+		Usage:    "stores, shops I have learned",
+		Parse:    noArgs, Run: (*Server).storesReply},
+
+	{Name: "edit", Needs: needsReceipts, Audience: audienceEveryone,
+		Usage: "edit 7 merchant: ICA",
+		Parse: parseEdit, Run: (*Server).editReply},
+}
+
+var verbIndex = indexVerbs()
+
+func indexVerbs() map[string]*verb {
+	index := make(map[string]*verb, len(verbs)*2)
+	for i := range verbs {
+		v := &verbs[i]
+		index[v.Name] = v
+		for _, alias := range v.Aliases {
+			index[alias] = v
+		}
+	}
+	return index
+}
+
+const helpPreamble = `*Receipt bot*
+
+Send a photo of a receipt and I'll read it.
+
+Commands:`
+
+const helpEpilogue = `
+Fields: merchant, total, subtotal, tax, currency, date
+
+Correcting a merchant teaches me that shop, so the next receipt from the same
+company gets the name automatically.`
+
+var helpText string
+
+// helpText is assembled here instead of in its own var initializer because the
+// verb table refers to helpReply, which reads helpText, and Go rejects that as
+// an initialization cycle.
+func init() { helpText = buildHelpText() }
+
+func buildHelpText() string {
+	var b strings.Builder
+
+	b.WriteString(helpPreamble)
+	for _, v := range verbs {
+		b.WriteString("\n")
+		b.WriteString(v.Usage)
+	}
+	b.WriteString("\n")
+	b.WriteString(helpEpilogue)
+
+	return b.String()
+}

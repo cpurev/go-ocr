@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -9,21 +10,7 @@ import (
 	"github.com/cpurev/go-ocr/internal/model"
 )
 
-type CommandKind int
-
-const (
-	CommandNone CommandKind = iota
-
-	CommandEdit
-
-	CommandHelp
-
-	CommandStores
-)
-
 type Command struct {
-	Kind CommandKind
-
 	Number int
 
 	Update model.ReceiptUpdate
@@ -32,45 +19,65 @@ type Command struct {
 }
 
 var (
-	editPrefixRe = regexp.MustCompile(`(?i)^\s*edit\s*#?\s*(\d+)\s*(.*)$`)
+	editNumberRe = regexp.MustCompile(`^\s*#?\s*(\d+)\s*`)
 
 	fieldRe = regexp.MustCompile(
 		`(?i)\b(merchant|shop|store|total|sum|subtotal|tax|vat|moms|currency|date)\b\s*[:=]?\s*`)
 )
 
-func ParseCommand(text string) Command {
+// parseCommand takes the leading run of letters as the verb word. A text with
+// no leading letter is its own word, which is what lets "?" be an alias.
+func parseCommand(text string) (*verb, Command, bool) {
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {
-		return Command{Kind: CommandNone}
+		return nil, Command{}, false
 	}
 
-	switch strings.ToLower(trimmed) {
-	case "help", "?", "commands":
-		return Command{Kind: CommandHelp}
-	case "stores", "shops", "merchants":
-		return Command{Kind: CommandStores}
+	end := 0
+	for end < len(trimmed) && isLetter(trimmed[end]) {
+		end++
 	}
 
-	m := editPrefixRe.FindStringSubmatch(trimmed)
+	word, args := trimmed, ""
+	if end > 0 {
+		word, args = trimmed[:end], strings.TrimSpace(trimmed[end:])
+	}
+
+	v, ok := verbIndex[strings.ToLower(word)]
+	if !ok {
+		return nil, Command{}, false
+	}
+
+	return v, v.Parse(args), true
+}
+
+func isLetter(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
+}
+
+func noArgs(string) Command { return Command{} }
+
+func parseEdit(args string) Command {
+	m := editNumberRe.FindStringSubmatchIndex(args)
 	if m == nil {
-		return Command{Kind: CommandNone}
+		return Command{Err: errors.New("which receipt? name its number")}
 	}
 
-	number, err := strconv.Atoi(m[1])
+	number, err := strconv.Atoi(args[m[2]:m[3]])
 	if err != nil || number <= 0 {
-		return Command{Kind: CommandEdit, Err: fmt.Errorf("receipt number must be a positive number")}
+		return Command{Err: errors.New("receipt number must be a positive number")}
 	}
 
-	update, err := parseFields(m[2])
+	update, err := parseFields(args[m[1]:])
 	if err != nil {
-		return Command{Kind: CommandEdit, Number: number, Err: err}
+		return Command{Number: number, Err: err}
 	}
 	if update.IsEmpty() {
-		return Command{Kind: CommandEdit, Number: number,
-			Err: fmt.Errorf("name at least one field to change, e.g. merchant: ICA")}
+		return Command{Number: number,
+			Err: errors.New("name at least one field to change, e.g. merchant: ICA")}
 	}
 
-	return Command{Kind: CommandEdit, Number: number, Update: update}
+	return Command{Number: number, Update: update}
 }
 
 func parseFields(tail string) (model.ReceiptUpdate, error) {
@@ -157,19 +164,3 @@ func parseMoney(s string) (float64, error) {
 
 	return strconv.ParseFloat(cleaned, 64)
 }
-
-const HelpText = `*Receipt bot*
-
-Send a photo of a receipt and I'll read it.
-
-Correct one I got wrong:
-edit 7 merchant: ICA
-edit 7 total: 154.53, date: 2026-08-04
-edit 7 merchant: Willys, currency: SEK
-
-Fields: merchant, total, subtotal, tax, currency, date
-
-Correcting a merchant teaches me that shop, so the next receipt from the same
-company gets the name automatically.
-
-Type *stores* to see what I've learned.`
