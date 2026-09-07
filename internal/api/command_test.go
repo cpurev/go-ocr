@@ -103,6 +103,15 @@ var parseCommandTests = []parseCommandCase{
 	{text: "spent", verb: "total"},
 	{text: "spent too much today"},
 
+	{text: "add 150 ICA", verb: "add"},
+	{text: "add 45.50 Coop", verb: "add"},
+	{text: "add 1200 Ikea, new lamp", verb: "add"},
+	{text: "add 150", verb: "add", wantErr: "name the shop, e.g. add 150 ICA"},
+	{text: "add 0 ICA", verb: "add", wantErr: "amount must be a positive number"},
+	{text: "add tomatoes to the list"},
+	{text: "add more sugar"},
+	{text: "additional cost this month"},
+
 	{text: "edit 7 merchant: ICA", verb: "edit", number: 7,
 		update: model.ReceiptUpdate{Merchant: ptr("ICA")}},
 	{text: "edit#7 total: 154,53", verb: "edit", number: 7,
@@ -341,6 +350,7 @@ func TestEveryVerbAnswersTheRightAudience(t *testing.T) {
 		"stores": audienceSender,
 		"last":   audienceSender,
 		"total":  audienceSender,
+		"add":    audienceEveryone,
 		"edit":   audienceEveryone,
 		"delete": audienceEveryone,
 	}
@@ -458,6 +468,52 @@ func TestParseTotal(t *testing.T) {
 			}
 			if cmd.Scope != tt.scope {
 				t.Errorf("parseTotal(%q) has scope %d, want %d", tt.args, cmd.Scope, tt.scope)
+			}
+		})
+	}
+}
+
+func TestParseAdd(t *testing.T) {
+	tests := []struct {
+		args     string
+		total    float64
+		merchant string
+		matched  bool
+		wantErr  string
+	}{
+		{args: "150 ICA", total: 150, merchant: "ICA", matched: true},
+		{args: "45.50 Coop", total: 45.50, merchant: "Coop", matched: true},
+		{args: "150,50 Coop", total: 150.50, merchant: "Coop", matched: true},
+		{args: "1200 Ikea, new lamp", total: 1200, merchant: "Ikea, new lamp", matched: true},
+		{args: "150", matched: true, wantErr: "name the shop, e.g. add 150 ICA"},
+		{args: "0 ICA", matched: true, wantErr: "amount must be a positive number"},
+		{args: "-5 ICA"},
+		{args: "tomatoes to the list"},
+		{args: "more sugar"},
+		{args: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("%q", tt.args), func(t *testing.T) {
+			cmd, matched := parseAdd(tt.args, testNow)
+
+			if matched != tt.matched {
+				t.Fatalf("parseAdd(%q) matched: %v, want %v", tt.args, matched, tt.matched)
+			}
+			if got := errText(cmd.Err); got != tt.wantErr {
+				t.Fatalf("parseAdd(%q) answered %q, want %q", tt.args, got, tt.wantErr)
+			}
+			if tt.wantErr != "" || !matched {
+				return
+			}
+			if cmd.Total != tt.total {
+				t.Errorf("parseAdd(%q) total %g, want %g", tt.args, cmd.Total, tt.total)
+			}
+			if cmd.Merchant != tt.merchant {
+				t.Errorf("parseAdd(%q) merchant %q, want %q", tt.args, cmd.Merchant, tt.merchant)
+			}
+			if want := testNow.Format(model.DateLayout); cmd.Date != want {
+				t.Errorf("parseAdd(%q) date %q, want %q", tt.args, cmd.Date, want)
 			}
 		})
 	}

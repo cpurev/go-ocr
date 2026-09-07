@@ -17,8 +17,9 @@ import (
 const commandTimeout = 20 * time.Second
 
 type request struct {
-	Sender string // normalized digits
-	Cmd    Command
+	Sender    string // normalized digits
+	MessageID string
+	Cmd       Command
 }
 
 func (s *Server) replyToText(ctx context.Context, txt whatsapp.InboundText) Reply {
@@ -48,8 +49,39 @@ func (s *Server) replyToText(ctx context.Context, txt whatsapp.InboundText) Repl
 	return Reply{
 		Sender:   sender,
 		Audience: v.Audience,
-		Body:     v.Run(s, ctx, request{Sender: sender, Cmd: cmd}),
+		Body:     v.Run(s, ctx, request{Sender: sender, MessageID: txt.MessageID, Cmd: cmd}),
 	}
+}
+
+// addReply logs a receipt with no photo: the message id stands in for the
+// media id, since it is the one thing about a text that is unique the way a
+// WhatsApp media download is, and it keeps a Meta redelivery from double-adding.
+func (s *Server) addReply(ctx context.Context, req request) string {
+	fields := model.ReceiptFields{
+		Merchant: req.Cmd.Merchant,
+		Total:    req.Cmd.Total,
+		Currency: s.cfg.ReceiptCurrency,
+		Date:     req.Cmd.Date,
+	}
+
+	created, err := s.deps.Receipts.CreateReceipt(ctx, model.ReceiptInput{
+		WhatsAppMediaID: req.MessageID,
+		UserID:          req.Sender,
+	}, fields)
+
+	switch {
+	case errors.Is(err, store.ErrDuplicate):
+		s.logger.Info("webhook text add already ingested", "message_id", req.MessageID)
+		return "I already logged that one."
+	case err != nil:
+		s.logger.Error("adding receipt from text", "message_id", req.MessageID, "error", err)
+		return "Something went wrong saving that. Please try again."
+	}
+
+	s.logger.Info("receipt added by text",
+		"receipt_id", created.ID, "merchant", created.Merchant, "total", created.Total)
+
+	return formatReceiptReply(created)
 }
 
 // missing names the dependency a verb needs and this deployment does not have.

@@ -55,6 +55,10 @@ var verbs = []verb{
 		Usage:    "total, total last month, total 2026-08, total all, total ever",
 		Parse:    parseTotal, Run: (*Server).totalReply},
 
+	{Name: "add", Needs: needsReceipts, Audience: audienceEveryone,
+		Usage: "add 150 ICA, a receipt with no photo",
+		Parse: parseAdd, Run: (*Server).addReply},
+
 	{Name: "edit", Needs: needsReceipts, Audience: audienceEveryone,
 		Usage: "edit 7 merchant: ICA, or edit total: 154.53 for the newest",
 		Parse: parseEdit, Run: (*Server).editReply},

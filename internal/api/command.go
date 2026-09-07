@@ -18,6 +18,11 @@ type Command struct {
 
 	Update model.ReceiptUpdate
 
+	// Total, Merchant, and Date are add's fields, for a receipt with no photo.
+	Total    float64
+	Merchant string
+	Date     string
+
 	Period Period
 	Scope  Scope
 
@@ -26,6 +31,10 @@ type Command struct {
 
 var (
 	editNumberRe = regexp.MustCompile(`^\s*#?\s*(\d+)\s*`)
+
+	// leadingAmountRe requires the amount to open the message, so "add" without
+	// one relays as chat instead of misreading whatever comes after it.
+	leadingAmountRe = regexp.MustCompile(`^(\d+(?:[.,]\d+)?)\s*`)
 
 	fieldRe = regexp.MustCompile(
 		`(?i)\b(merchant|shop|store|total|sum|subtotal|tax|vat|moms|currency|date)\b\s*[:=]?\s*`)
@@ -155,6 +164,31 @@ func parseDelete(args string, _ time.Time) (Command, bool) {
 	}
 
 	return Command{Number: number}, true
+}
+
+// parseAdd reads "150 ICA" as a receipt with no photo: the leading number is
+// the total, the rest of the line is the merchant. A message that does not
+// open with a number is not this verb's arguments at all, since "add" alone
+// is ordinary English too.
+func parseAdd(args string, now time.Time) (Command, bool) {
+	args = strings.TrimSpace(args)
+
+	m := leadingAmountRe.FindStringSubmatchIndex(args)
+	if m == nil {
+		return Command{}, false
+	}
+
+	amount, err := parseMoney(args[m[2]:m[3]])
+	if err != nil || amount <= 0 {
+		return Command{Err: errors.New("amount must be a positive number")}, true
+	}
+
+	merchant := strings.TrimSpace(args[m[1]:])
+	if merchant == "" {
+		return Command{Err: errors.New("name the shop, e.g. add 150 ICA")}, true
+	}
+
+	return Command{Total: amount, Merchant: merchant, Date: now.Format(model.DateLayout)}, true
 }
 
 func parseTotal(args string, now time.Time) (Command, bool) {

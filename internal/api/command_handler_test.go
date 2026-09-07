@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -341,6 +342,68 @@ func TestTotalReply(t *testing.T) {
 			if !asked.From.Equal(september.From) || !asked.To.Equal(september.To) {
 				t.Errorf("total asked the store for [%s, %s), want [%s, %s)",
 					asked.From, asked.To, september.From, september.To)
+			}
+		})
+	}
+}
+
+func TestAddReply(t *testing.T) {
+	cmd := Command{Total: 150, Merchant: "ICA", Date: "2026-09-07"}
+
+	tests := []struct {
+		name    string
+		created model.Receipt
+		err     error
+		want    string
+	}{
+		{
+			name: "logs a new receipt",
+			created: model.Receipt{ID: "a1", Number: 12, Merchant: "ICA",
+				Total: 150, Currency: "SEK", Date: "2026-09-07"},
+			want: "*Receipt #12 saved*\n\n" +
+				"Merchant: ICA\nDate: 2026-09-07\nTotal: 150.00 SEK\n\n" +
+				"Wrong? edit 12 merchant: ICA",
+		},
+		{
+			name: "a redelivery of the same text does not double-add",
+			err:  fmt.Errorf("%w: message already ingested", store.ErrDuplicate),
+			want: "I already logged that one.",
+		},
+		{
+			name: "store outage",
+			err:  errors.New("mongo is unreachable"),
+			want: "Something went wrong saving that. Please try again.",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotIn model.ReceiptInput
+			var gotFields model.ReceiptFields
+			receipts := &fakeReceipts{
+				createReceipt: func(_ context.Context, in model.ReceiptInput, fields model.ReceiptFields) (model.Receipt, error) {
+					gotIn, gotFields = in, fields
+					return tt.created, tt.err
+				},
+			}
+			srv := newCommandServer(t, nil, receipts)
+
+			got := srv.addReply(context.Background(),
+				request{Sender: alice, MessageID: "wamid.ADD1", Cmd: cmd})
+			if got != tt.want {
+				t.Errorf("add replied %q, want %q", got, tt.want)
+			}
+
+			if gotIn.WhatsAppMediaID != "wamid.ADD1" {
+				t.Errorf("add stored media id %q, want the message id wamid.ADD1: "+
+					"that is what stops a Meta redelivery double-adding", gotIn.WhatsAppMediaID)
+			}
+			if gotIn.UserID != alice {
+				t.Errorf("add stored user %q, want the sender %q", gotIn.UserID, alice)
+			}
+			if gotFields.Merchant != cmd.Merchant || gotFields.Total != cmd.Total || gotFields.Date != cmd.Date {
+				t.Errorf("add stored fields %+v, want merchant %q total %g date %q",
+					gotFields, cmd.Merchant, cmd.Total, cmd.Date)
 			}
 		})
 	}
