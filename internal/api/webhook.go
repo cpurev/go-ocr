@@ -91,7 +91,25 @@ func (s *Server) handleWebhookReceive(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	s.logFailedDeliveries(n)
+
 	httpx.OK(w, http.StatusOK, map[string]int{"images_accepted": len(images)}, nil)
+}
+
+// logFailedDeliveries reports messages Meta accepted and then could not deliver.
+// A send returns 200 well before this callback arrives, so without it a text
+// that never reached the recipient looks identical to one that did.
+func (s *Server) logFailedDeliveries(n whatsapp.Notification) {
+	for _, f := range n.Failures() {
+		if f.OutsideWindow() {
+			s.logger.Warn("whatsapp delivery failed: recipient never opened a 24h window",
+				"to", f.Recipient, "code", f.Code,
+				"hint", "recipient must message the bot, or the text needs an approved template")
+			continue
+		}
+		s.logger.Error("whatsapp delivery failed",
+			"to", f.Recipient, "code", f.Code, "reason", f.Reason, "message_id", f.MessageID)
+	}
 }
 
 // allowed drops messages from numbers outside a configured relay. The drop is

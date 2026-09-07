@@ -33,6 +33,7 @@ type Change struct {
 type ChangeValue struct {
 	MessagingProduct string    `json:"messaging_product"`
 	Messages         []Message `json:"messages"`
+	Statuses         []Status  `json:"statuses"`
 }
 
 type Message struct {
@@ -105,4 +106,71 @@ func (n Notification) Texts() []InboundText {
 		}
 	}
 	return texts
+}
+
+type Status struct {
+	ID          string        `json:"id"`
+	Status      string        `json:"status"`
+	RecipientID string        `json:"recipient_id"`
+	Errors      []StatusError `json:"errors"`
+}
+
+type StatusError struct {
+	Code    int    `json:"code"`
+	Title   string `json:"title"`
+	Message string `json:"message"`
+}
+
+// DeliveryFailure is a message Meta accepted and then could not deliver. The
+// send call returns 200 long before this arrives, so a failed status is the
+// only evidence that a recipient never got the text.
+type DeliveryFailure struct {
+	MessageID string
+	Recipient string
+	Code      int
+	Reason    string
+}
+
+// OutsideWindow reports the recipient never opened a 24-hour service window.
+// No retry fixes it: that recipient has to message the business number first,
+// or the text has to go out as an approved template.
+func (f DeliveryFailure) OutsideWindow() bool {
+	return f.Code == errCodeReEngagement
+}
+
+func (n Notification) Failures() []DeliveryFailure {
+	var failures []DeliveryFailure
+	for _, entry := range n.Entry {
+		for _, change := range entry.Changes {
+			for _, st := range change.Value.Statuses {
+				if st.Status != "failed" {
+					continue
+				}
+				failures = append(failures, DeliveryFailure{
+					MessageID: st.ID,
+					Recipient: st.RecipientID,
+					Code:      firstErrorCode(st.Errors),
+					Reason:    firstErrorReason(st.Errors),
+				})
+			}
+		}
+	}
+	return failures
+}
+
+func firstErrorCode(errs []StatusError) int {
+	if len(errs) == 0 {
+		return 0
+	}
+	return errs[0].Code
+}
+
+func firstErrorReason(errs []StatusError) string {
+	if len(errs) == 0 {
+		return ""
+	}
+	if errs[0].Title != "" {
+		return errs[0].Title
+	}
+	return errs[0].Message
 }
