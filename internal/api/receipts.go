@@ -101,7 +101,6 @@ func receiptFilterFrom(r *http.Request) (store.ReceiptFilter, error) {
 		Merchant: q.String("merchant"),
 		UserID:   q.String("user_id"),
 		GroupID:  q.String("group_id"),
-		Currency: q.String("currency"),
 		DateFrom: q.String("date_from"),
 		DateTo:   q.String("date_to"),
 	}

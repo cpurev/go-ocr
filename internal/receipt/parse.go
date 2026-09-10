@@ -11,12 +11,10 @@ import (
 
 type Parser struct {
 	DayFirst bool
-
-	DefaultCurrency string
 }
 
-func New(dayFirst bool, defaultCurrency string) *Parser {
-	return &Parser{DayFirst: dayFirst, DefaultCurrency: strings.ToUpper(defaultCurrency)}
+func New(dayFirst bool) *Parser {
+	return &Parser{DayFirst: dayFirst}
 }
 
 const currencyCodes = `USD|EUR|GBP|JPY|CNY|KRW|INR|MNT|AUD|CAD|CHF|SGD|THB|RUB|` +
@@ -33,8 +31,6 @@ var (
 	textDateDMYRe = regexp.MustCompile(`(?i)\b(\d{1,2})\s+([a-z]{3,9})\.?,?\s+(\d{2,4})\b`)
 	textDateMDYRe = regexp.MustCompile(`(?i)\b([a-z]{3,9})\.?\s+(\d{1,2}),?\s+(\d{2,4})\b`)
 
-	currencyCodeRe = regexp.MustCompile(`\b(` + currencyCodes + `)\b`)
-
 	amountWithCodeRe = regexp.MustCompile(
 		`([-+]?(?:\d{1,3}(?:[ ,.]\d{3})+|\d+)(?:[.,]\d{1,2})?)\s*(?:` + currencyCodes + `)\b`)
 
@@ -45,9 +41,7 @@ var (
 	qtySuffixRe = regexp.MustCompile(`^(.*?)\s+[xX×]\s*(\d{1,3})$`)
 )
 
-var symbolCurrency = map[string]string{
-	"$": "USD", "€": "EUR", "£": "GBP", "¥": "JPY", "₮": "MNT", "₩": "KRW", "₹": "INR",
-}
+var currencySymbols = []string{"$", "€", "£", "¥", "₮", "₩", "₹"}
 
 var (
 	subtotalWords = []string{"subtotal", "sub total", "sub-total", "net total", "net amount", "delsumma"}
@@ -77,7 +71,6 @@ func (p *Parser) Parse(raw string) model.ReceiptFields {
 
 	fields.Merchant = p.findMerchant(lines)
 	fields.Date = p.findDate(raw)
-	fields.Currency = p.findCurrency(raw)
 	fields.Subtotal, fields.Tax, fields.Total = p.findTotals(lines)
 	fields.LineItems = p.findLineItems(lines)
 
@@ -148,18 +141,6 @@ func (p *Parser) findDate(raw string) string {
 	}
 
 	return ""
-}
-
-func (p *Parser) findCurrency(raw string) string {
-	if m := currencyCodeRe.FindString(strings.ToUpper(raw)); m != "" {
-		return m
-	}
-	for symbol, code := range symbolCurrency {
-		if strings.Contains(raw, symbol) {
-			return code
-		}
-	}
-	return p.DefaultCurrency
 }
 
 func (p *Parser) findTotals(lines []string) (subtotal, tax, total float64) {
@@ -306,7 +287,7 @@ func lastAmountText(line string) string {
 
 func parseAmount(s string) (float64, bool) {
 	s = strings.TrimSpace(s)
-	for symbol := range symbolCurrency {
+	for _, symbol := range currencySymbols {
 		s = strings.ReplaceAll(s, symbol, "")
 	}
 	s = strings.ReplaceAll(s, " ", "")

@@ -36,7 +36,6 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 type scanResponse struct {
 	Merchant  string           `json:"merchant"`
 	Date      string           `json:"date"`
-	Currency  string           `json:"currency"`
 	Subtotal  float64          `json:"subtotal"`
 	Tax       float64          `json:"tax"`
 	Total     float64          `json:"total"`
@@ -48,7 +47,6 @@ func scanResponseFrom(f model.ReceiptFields) scanResponse {
 	return scanResponse{
 		Merchant:  f.Merchant,
 		Date:      f.Date,
-		Currency:  f.Currency,
 		Subtotal:  f.Subtotal,
 		Tax:       f.Tax,
 		Total:     f.Total,

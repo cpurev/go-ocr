@@ -45,8 +45,6 @@ type Config struct {
 
 	ReceiptDayFirst bool
 
-	ReceiptCurrency string
-
 	MongoStores string
 
 	MongoCounters string
@@ -86,7 +84,6 @@ func Load() (Config, error) {
 
 		ReceiptDayFirst:   getBool("RECEIPT_DAY_FIRST", true),
 		StoreOverridesOCR: getBool("STORE_OVERRIDES_OCR", false),
-		ReceiptCurrency:   getString("RECEIPT_DEFAULT_CURRENCY", "USD"),
 	}
 
 	var err error

@@ -92,7 +92,7 @@ Send a photo of a receipt and I'll read it.
 Commands:`
 
 const helpEpilogue = `
-Fields: merchant, total, subtotal, tax, currency, date
+Fields: merchant, total, subtotal, tax, date
 
 Correcting a merchant teaches me that shop, so the next receipt from the same
 company gets the name automatically.`

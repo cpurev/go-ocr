@@ -41,14 +41,13 @@ func NewStore(id, orgNr, merchant string, now time.Time) Store {
 type ReceiptUpdate struct {
 	Merchant *string
 	Date     *string
-	Currency *string
 	Subtotal *float64
 	Tax      *float64
 	Total    *float64
 }
 
 func (u ReceiptUpdate) IsEmpty() bool {
-	return u.Merchant == nil && u.Date == nil && u.Currency == nil &&
+	return u.Merchant == nil && u.Date == nil &&
 		u.Subtotal == nil && u.Tax == nil && u.Total == nil
 }
 
@@ -62,9 +61,6 @@ func (u ReceiptUpdate) Validate() ValidationErrors {
 		if _, err := time.Parse(DateLayout, strings.TrimSpace(*u.Date)); err != nil {
 			problems["date"] = "must be YYYY-MM-DD"
 		}
-	}
-	if u.Currency != nil && *u.Currency != "" && len(strings.TrimSpace(*u.Currency)) != 3 {
-		problems["currency"] = "must be a 3-letter code, e.g. SEK"
 	}
 	for name, v := range map[string]*float64{
 		"subtotal": u.Subtotal, "tax": u.Tax, "total": u.Total,
@@ -87,10 +83,6 @@ func (u ReceiptUpdate) Normalized() ReceiptUpdate {
 	if u.Date != nil {
 		v := strings.TrimSpace(*u.Date)
 		out.Date = &v
-	}
-	if u.Currency != nil {
-		v := strings.ToUpper(strings.TrimSpace(*u.Currency))
-		out.Currency = &v
 	}
 	for _, p := range []struct{ in, out **float64 }{
 		{&u.Subtotal, &out.Subtotal}, {&u.Tax, &out.Tax}, {&u.Total, &out.Total},

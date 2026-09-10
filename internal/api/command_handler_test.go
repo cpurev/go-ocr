@@ -86,15 +86,15 @@ func TestLastReply(t *testing.T) {
 		{
 			name: "one receipt is singular",
 			receipts: []model.Receipt{
-				{Number: 48, Merchant: "ICA", Total: 154.53, Currency: "SEK", Date: "2026-08-04"},
+				{Number: 48, Merchant: "ICA", Total: 154.53, Date: "2026-08-04"},
 			},
 			want: "*Last receipt*\n\n#48 ICA, 154.53 SEK, 2026-08-04\n",
 		},
 		{
 			name: "several keep the order the store gave",
 			receipts: []model.Receipt{
-				{Number: 48, Merchant: "ICA", Total: 154.53, Currency: "SEK", Date: "2026-08-04"},
-				{Number: 47, Merchant: "Willys", Total: 89, Currency: "SEK", Date: "2026-08-01"},
+				{Number: 48, Merchant: "ICA", Total: 154.53, Date: "2026-08-04"},
+				{Number: 47, Merchant: "Willys", Total: 89, Date: "2026-08-01"},
 			},
 			want: "*Last 2 receipts*\n\n" +
 				"#48 ICA, 154.53 SEK, 2026-08-04\n" +
@@ -103,7 +103,7 @@ func TestLastReply(t *testing.T) {
 		{
 			name: "a receipt OCR could not read",
 			receipts: []model.Receipt{
-				{Number: 3, Total: 12.5, Currency: "SEK"},
+				{Number: 3, Total: 12.5},
 			},
 			want: "*Last receipt*\n\n#3 (no merchant), 12.50 SEK\n",
 		},
@@ -138,9 +138,9 @@ func TestLastReply(t *testing.T) {
 
 func TestEditWithNoNumberTargetsTheNewestByInsertionOrder(t *testing.T) {
 	newest := model.Receipt{ID: "a1", Number: 48, Merchant: "ICA",
-		Total: 154.53, Currency: "SEK", Date: "2026-01-02"}
+		Total: 154.53, Date: "2026-01-02"}
 	older := model.Receipt{ID: "b2", Number: 47, Merchant: "Willys",
-		Total: 89, Currency: "SEK", Date: "2026-08-04"}
+		Total: 89, Date: "2026-08-04"}
 
 	var askedLimit, askedNumber int
 	receipts := &fakeReceipts{
@@ -217,7 +217,7 @@ func TestEditWithNoNumberWhenThereIsNothingToTarget(t *testing.T) {
 
 func TestDeleteReply(t *testing.T) {
 	gone := model.Receipt{ID: "a1", Number: 7, Merchant: "ICA",
-		Total: 154.53, Tax: 30.91, Currency: "SEK", Date: "2026-08-04"}
+		Total: 154.53, Tax: 30.91, Date: "2026-08-04"}
 
 	var deletedID string
 	receipts := &fakeReceipts{
@@ -271,33 +271,47 @@ func TestTotalReply(t *testing.T) {
 		Label: "September 2026",
 	}
 
+	ica := model.Receipt{Number: 48, Merchant: "ICA", Total: 154.53, Date: "2026-09-04"}
+	willys := model.Receipt{Number: 47, Merchant: "Willys", Total: 89, Date: "2026-09-01"}
+
 	tests := []struct {
-		name   string
-		scope  Scope
-		totals []store.CurrencyTotal
-		err    error
-		want   string
+		name  string
+		scope Scope
+		total store.ReceiptTotal
+		err   error
+		want  string
 	}{
 		{
-			name:   "one receipt is singular",
-			totals: []store.CurrencyTotal{{Currency: "SEK", Total: 154.53, Count: 1}},
-			want:   "*Total for September 2026*\n\n154.53 SEK (1 receipt)\n",
-		},
-		{
-			name: "currencies are listed apart and only the undated one explains itself",
-			totals: []store.CurrencyTotal{
-				{Currency: "SEK", Total: 1240.50, Count: 12, Undated: 2},
-				{Currency: "EUR", Total: 89, Count: 1},
-			},
+			name:  "one receipt is singular",
+			total: store.ReceiptTotal{Total: 154.53, Count: 1, Latest: []model.Receipt{ica}},
 			want: "*Total for September 2026*\n\n" +
-				"1240.50 SEK (12 receipts, 2 dated by when I got them)\n" +
-				"89.00 EUR (1 receipt)\n",
+				"Total: 154.53 SEK (1 receipt)\n\n" +
+				"Latest:\n#48 ICA, 154.53 SEK, 2026-09-04\n",
 		},
 		{
-			name:   "everyone says so in the header",
-			scope:  scopeEveryone,
-			totals: []store.CurrencyTotal{{Currency: "SEK", Total: 89, Count: 2}},
-			want:   "*Total for September 2026, everyone*\n\n89.00 SEK (2 receipts)\n",
+			name: "one sum that explains the undated, then the latest five",
+			total: store.ReceiptTotal{Total: 1240.50, Count: 12, Undated: 2, Latest: []model.Receipt{
+				ica, willys,
+				{Number: 46, Merchant: "Coop", Total: 54.43},
+				{Number: 45, Merchant: "Lidl", Total: 100.10, Date: "2026-09-01"},
+				{Number: 44, Merchant: "Ikea", Total: 385.97, Date: "2026-08-30"},
+			}},
+			want: "*Total for September 2026*\n\n" +
+				"Total: 1240.50 SEK (12 receipts, 2 dated by when I got them)\n\n" +
+				"Latest:\n" +
+				"#48 ICA, 154.53 SEK, 2026-09-04\n" +
+				"#47 Willys, 89.00 SEK, 2026-09-01\n" +
+				"#46 Coop, 54.43 SEK\n" +
+				"#45 Lidl, 100.10 SEK, 2026-09-01\n" +
+				"#44 Ikea, 385.97 SEK, 2026-08-30\n",
+		},
+		{
+			name:  "everyone says so in the header",
+			scope: scopeEveryone,
+			total: store.ReceiptTotal{Total: 243.53, Count: 2, Latest: []model.Receipt{ica, willys}},
+			want: "*Total for September 2026, everyone*\n\n" +
+				"Total: 243.53 SEK (2 receipts)\n\n" +
+				"Latest:\n#48 ICA, 154.53 SEK, 2026-09-04\n#47 Willys, 89.00 SEK, 2026-09-01\n",
 		},
 		{
 			name: "nothing in that month",
@@ -319,9 +333,9 @@ func TestTotalReply(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var asked store.TotalQuery
 			receipts := &fakeReceipts{
-				sumReceipts: func(_ context.Context, q store.TotalQuery) ([]store.CurrencyTotal, error) {
+				sumReceipts: func(_ context.Context, q store.TotalQuery) (store.ReceiptTotal, error) {
 					asked = q
-					return tt.totals, tt.err
+					return tt.total, tt.err
 				},
 			}
 			srv := newCommandServer(t, nil, receipts)
@@ -343,6 +357,10 @@ func TestTotalReply(t *testing.T) {
 				t.Errorf("total asked the store for [%s, %s), want [%s, %s)",
 					asked.From, asked.To, september.From, september.To)
 			}
+			if asked.Latest != defaultRecent {
+				t.Errorf("total asked the store for the latest %d receipts, want %d",
+					asked.Latest, defaultRecent)
+			}
 		})
 	}
 }
@@ -359,7 +377,7 @@ func TestAddReply(t *testing.T) {
 		{
 			name: "logs a new receipt",
 			created: model.Receipt{ID: "a1", Number: 12, Merchant: "ICA",
-				Total: 150, Currency: "SEK", Date: "2026-09-07"},
+				Total: 150, Date: "2026-09-07"},
 			want: "*Receipt #12 saved*\n\n" +
 				"Merchant: ICA\nDate: 2026-09-07\nTotal: 150.00 SEK\n\n" +
 				"Wrong? edit 12 merchant: ICA",

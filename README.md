@@ -2,8 +2,9 @@
 
 A Go HTTP service that takes a receipt image, runs it through Tesseract OCR, and
 returns structured data. The two fields that matter are the total and the date.
-Merchant, line items, tax, and currency are best effort: the parser returns
-whatever it can read and never fails over a missing field.
+Merchant, line items, and tax are best effort: the parser returns whatever it
+can read and never fails over a missing field. Every amount is in SEK, since the
+receipts are Swedish.
 
 The core needs no database and no WhatsApp account. Both integrations live in
 separate packages and boot only when configured.
@@ -123,8 +124,8 @@ and store, each behind an interface:
 3. Parse (`internal/receipt/parse.go`). Heuristics, not a grammar. It scans for
    recognizable shapes and never returns an error: unreadable text yields empty
    fields, and the raw text is still stored so a user can correct it. Priority
-   order is the total and the date first; merchant, line items, tax, and
-   currency are best-effort extras.
+   order is the total and the date first; merchant, line items, and tax are
+   best-effort extras.
 4. Store (`internal/store/receipt_mongo.go`).
 
 Interfaces are declared in the consumer (`internal/receipt`), each listing only
@@ -225,7 +226,6 @@ concurrent requests cannot create a duplicate.
 | ----------------------- | ------------------------------------ |
 | `merchant`              | case-insensitive substring           |
 | `user_id` / `group_id`  | exact match                          |
-| `currency`              | exact, e.g. `USD`                    |
 | `date_from` / `date_to` | inclusive, `YYYY-MM-DD`              |
 | `min_total`/`max_total` | numeric range                        |
 | `limit` / `offset`      | paging (default 50, max 200)         |
@@ -301,7 +301,7 @@ number rather than forwarding silently.
 | `who`, `relay` | the numbers on the relay | the asker |
 | `stores`, `shops`, `merchants` | the shops it has learned | everyone |
 | `last`, `last 5`, `recent` | the newest receipts, by when they arrived | the asker |
-| `total`, `sum`, `spent`, `total last month`, `total 2026-08`, `total all`, `total ever` | per-currency sums for one month | the asker |
+| `total`, `sum`, `spent`, `total last month`, `total 2026-08`, `total all`, `total ever` | one SEK sum and the five newest receipts in it | the asker |
 | `edit 7 merchant: ICA` | the receipt after the change | everyone |
 | `delete 7`, `remove 7`, `rm 7` | the full contents of what vanished | everyone |
 
@@ -312,11 +312,12 @@ parse error and a missing dependency always go to the sender alone. A grammar
 nag is between the bot and whoever typed it.
 
 `total` covers the month containing today unless the message names another, and
-draws month boundaries in the zone `APP_TIMEZONE` sets. It reports one line per
-currency rather than one number, since adding SEK to EUR would be a lie. A
-receipt OCR could not date is counted by when it arrived rather than dropped
-from the month, and the reply says how many went in that way. `total all` counts
-everyone on the relay instead of just the asker.
+draws month boundaries in the zone `APP_TIMEZONE` sets. It answers with one
+number, because every receipt is SEK. That includes older receipts the database
+still labels USD. Under the number come the five receipts in the total that
+arrived last, newest first. A receipt OCR could not date is counted by when it
+arrived rather than dropped from the month, and the reply says how many went in
+that way. `total all` counts everyone on the relay instead of just the asker.
 
 `delete` demands a number and refuses anything after it, where `edit` takes a
 number, a list of fields, or both. A wrong edit is repairable and a wrong delete
@@ -333,13 +334,13 @@ ordinary WhatsApp messages:
 ```
 edit 7 merchant: ICA
 edit 7 total: 154,53, date: 2026-08-04
-edit 7 merchant: ICA Kvantum Sundsvall, currency: SEK
+edit 7 merchant: ICA Kvantum Sundsvall
 ```
 
 Commas and colons are optional, case is ignored, and `154,53` is accepted
 because that is how Swedish receipts print. The fields are `merchant`, `total`,
-`subtotal`, `tax`, `currency`, and `date`. `help` lists them, and `stores` shows
-what the bot has learned.
+`subtotal`, `tax`, and `date`. `help` lists them, and `stores` shows what the
+bot has learned.
 
 Edits are partial. `model.ReceiptUpdate` uses pointer fields, so "not mentioned"
 and "set to empty" are different values and a merchant correction cannot blank
@@ -430,7 +431,6 @@ Everything is optional. Each integration boots only when its variable is set:
 | `TESSERACT_LANG`            | `eng`          | traineddata language, e.g. `eng+mon`       |
 | `OCR_TIMEOUT`               | `30s`          | budget for one tesseract run               |
 | `RECEIPT_DAY_FIRST`         | `true`         | `04/08/2025` → 4 Aug (`false` → 8 Apr)     |
-| `RECEIPT_DEFAULT_CURRENCY`  | `USD`          | used when the receipt shows no symbol      |
 | `DOTENV_PATH`               | `.env`         | where to look for the env file             |
 | `APP_ENV`                   | `development`  | text logs locally, JSON otherwise          |
 | `APP_TIMEZONE`              | `Europe/Stockholm` | the zone `total` draws month boundaries in |

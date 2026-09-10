@@ -18,29 +18,33 @@ var ErrTooManyReceipts = errors.New("store: too many receipts to total")
 // refusal rather than a quietly truncated sum.
 const maxTotalReceipts = 10_000
 
-type CurrencyTotal struct {
-	Currency string
-	Total    float64
-	Count    int
+type ReceiptTotal struct {
+	Total float64
+	Count int
 
 	// Undated counts receipts included by createdAt because OCR found no date
 	// on them, so a surprising total can be explained.
 	Undated int
+
+	// Latest is newest first by insertion order, at most TotalQuery.Latest.
+	Latest []model.Receipt
 }
 
 // TotalQuery selects the receipts a total covers. The range is half-open,
 // [From, To), and a zero time means unbounded. An empty UserID means everyone.
+// Latest is how many of the newest selected receipts come back with the sum,
+// and does not narrow what is summed.
 type TotalQuery struct {
 	UserID string
 	From   time.Time
 	To     time.Time
+	Latest int
 }
 
 type ReceiptFilter struct {
 	Merchant string
 	UserID   string
 	GroupID  string
-	Currency string
 	DateFrom string
 	DateTo   string
 	MinTotal *float64
@@ -61,7 +65,6 @@ func (f ReceiptFilter) Validate() (ReceiptFilter, model.ValidationErrors) {
 	f.Merchant = strings.TrimSpace(f.Merchant)
 	f.UserID = strings.TrimSpace(f.UserID)
 	f.GroupID = strings.TrimSpace(f.GroupID)
-	f.Currency = strings.ToUpper(strings.TrimSpace(f.Currency))
 
 	for field, value := range map[string]string{"date_from": f.DateFrom, "date_to": f.DateTo} {
 		if value == "" {
@@ -116,9 +119,10 @@ type ReceiptStore interface {
 
 	DeleteReceipt(ctx context.Context, id string) error
 
-	// SumReceipts totals per currency. A receipt OCR could not date is dated by
-	// createdAt so it cannot fall out of a month.
-	SumReceipts(ctx context.Context, q TotalQuery) ([]CurrencyTotal, error)
+	// SumReceipts is one sum because every receipt is SEK, so a receipt still
+	// labelled with another currency counts too. A receipt OCR could not date is
+	// dated by createdAt so it cannot fall out of a month.
+	SumReceipts(ctx context.Context, q TotalQuery) (ReceiptTotal, error)
 }
 
 type StoreDirectory interface {
@@ -145,7 +149,6 @@ func describeFilter(f ReceiptFilter) string {
 	add("merchant", f.Merchant)
 	add("user", f.UserID)
 	add("group", f.GroupID)
-	add("currency", f.Currency)
 	add("from", f.DateFrom)
 	add("to", f.DateTo)
 	if f.MinTotal != nil {

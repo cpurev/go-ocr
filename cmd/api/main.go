@@ -54,7 +54,7 @@ func run() error {
 			"hint", "brew install tesseract (macOS) or apt-get install tesseract-ocr",
 			"error", err)
 	}
-	scanner := receipt.NewScanner(engine, receipt.New(cfg.ReceiptDayFirst, cfg.ReceiptCurrency))
+	scanner := receipt.NewScanner(engine, receipt.New(cfg.ReceiptDayFirst))
 
 	var (
 		receiptStore store.ReceiptStore

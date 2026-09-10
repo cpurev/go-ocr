@@ -1,7 +1,7 @@
 package store
 
 import (
-	"cmp"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -39,7 +39,6 @@ type receiptDocument struct {
 	GroupID         string             `bson:"groupId,omitempty"`
 	Merchant        string             `bson:"merchant"`
 	Date            string             `bson:"date"`
-	Currency        string             `bson:"currency"`
 	Subtotal        float64            `bson:"subtotal"`
 	Tax             float64            `bson:"tax"`
 	Total           float64            `bson:"total"`
@@ -47,6 +46,10 @@ type receiptDocument struct {
 	RawText         string             `bson:"rawText,omitempty"`
 	CreatedAt       time.Time          `bson:"createdAt"`
 	UpdatedAt       time.Time          `bson:"updatedAt"`
+
+	// Older receipts carry the USD default this label once had, so it is
+	// written for anyone reading the collection and never trusted on read.
+	Currency string `bson:"currency"`
 }
 
 type lineItemDocument struct {
@@ -69,7 +72,6 @@ func (d receiptDocument) toModel() model.Receipt {
 		GroupID:         d.GroupID,
 		Merchant:        d.Merchant,
 		Date:            d.Date,
-		Currency:        d.Currency,
 		Subtotal:        d.Subtotal,
 		Tax:             d.Tax,
 		Total:           d.Total,
@@ -94,7 +96,6 @@ func newReceiptDocument(r model.Receipt, id bson.ObjectID) receiptDocument {
 		GroupID:         r.GroupID,
 		Merchant:        r.Merchant,
 		Date:            r.Date,
-		Currency:        r.Currency,
 		Subtotal:        r.Subtotal,
 		Tax:             r.Tax,
 		Total:           r.Total,
@@ -102,6 +103,7 @@ func newReceiptDocument(r model.Receipt, id bson.ObjectID) receiptDocument {
 		RawText:         r.RawText,
 		CreatedAt:       r.CreatedAt,
 		UpdatedAt:       r.UpdatedAt,
+		Currency:        model.Currency,
 	}
 }
 
@@ -197,9 +199,6 @@ func (m *MongoReceipts) UpdateReceipt(ctx context.Context, id string, update mod
 	}
 	if clean.Date != nil {
 		set = append(set, bson.E{Key: "date", Value: *clean.Date})
-	}
-	if clean.Currency != nil {
-		set = append(set, bson.E{Key: "currency", Value: *clean.Currency})
 	}
 	if clean.Subtotal != nil {
 		set = append(set, bson.E{Key: "subtotal", Value: *clean.Subtotal})
@@ -332,64 +331,60 @@ func (m *MongoReceipts) ListRecentReceipts(ctx context.Context, limit int) ([]mo
 	return receipts, nil
 }
 
-func (m *MongoReceipts) SumReceipts(ctx context.Context, q TotalQuery) ([]CurrencyTotal, error) {
+func (m *MongoReceipts) SumReceipts(ctx context.Context, q TotalQuery) (ReceiptTotal, error) {
 	// One over the limit tells a full page from an overflowing one. The
-	// projection cuts the decode to the three fields the fold reads, because
-	// rawText runs to 50k runes and maxTotalReceipts of those would drag half a
-	// gigabyte through a single reply.
+	// projection cuts the decode to what the sum and the latest lines read, with
+	// _id coming back by default to order them, because rawText runs to 50k runes
+	// and maxTotalReceipts of those would drag half a gigabyte through one reply.
 	cursor, err := m.coll.Find(ctx, buildTotalQuery(q), options.Find().
 		SetLimit(maxTotalReceipts+1).
 		SetProjection(bson.D{
-			{Key: "currency", Value: 1},
+			{Key: "number", Value: 1},
+			{Key: "merchant", Value: 1},
 			{Key: "total", Value: 1},
 			{Key: "date", Value: 1},
 		}))
 	if err != nil {
-		return nil, fmt.Errorf("mongo: totalling receipts: %w", err)
+		return ReceiptTotal{}, fmt.Errorf("mongo: totalling receipts: %w", err)
 	}
 	defer cursor.Close(ctx)
 
 	var docs []receiptDocument
 	if err := cursor.All(ctx, &docs); err != nil {
-		return nil, fmt.Errorf("mongo: decoding receipts to total: %w", err)
+		return ReceiptTotal{}, fmt.Errorf("mongo: decoding receipts to total: %w", err)
 	}
 
-	return sumByCurrency(docs)
+	return sumReceipts(docs, q.Latest)
 }
 
-// sumByCurrency is kept pure so the arithmetic and the refusal boundary can be
-// exercised without a live Mongo.
-func sumByCurrency(docs []receiptDocument) ([]CurrencyTotal, error) {
+// sumReceipts is kept pure so the arithmetic, the refusal boundary, and the
+// pick of the latest receipts can be exercised without a live Mongo. The pick
+// is made here rather than by a Mongo sort, because a blocking sort on the
+// server could hold whole documents, rawText and all.
+func sumReceipts(docs []receiptDocument, latest int) (ReceiptTotal, error) {
 	if len(docs) > maxTotalReceipts {
-		return nil, ErrTooManyReceipts
+		return ReceiptTotal{}, ErrTooManyReceipts
 	}
 
-	byCurrency := make(map[string]CurrencyTotal, 4)
+	var total ReceiptTotal
 	for _, doc := range docs {
-		t := byCurrency[doc.Currency]
-		t.Currency = doc.Currency
-		t.Total += doc.Total
-		t.Count++
+		total.Total += doc.Total
+		total.Count++
 		if doc.Date == "" {
-			t.Undated++
+			total.Undated++
 		}
-		byCurrency[doc.Currency] = t
 	}
+	total.Total = model.RoundMoney(total.Total)
 
-	totals := make([]CurrencyTotal, 0, len(byCurrency))
-	for _, t := range byCurrency {
-		t.Total = model.RoundMoney(t.Total)
-		totals = append(totals, t)
-	}
-
-	slices.SortFunc(totals, func(a, b CurrencyTotal) int {
-		if c := cmp.Compare(b.Total, a.Total); c != 0 {
-			return c
-		}
-		return cmp.Compare(a.Currency, b.Currency)
+	newest := slices.Clone(docs)
+	slices.SortFunc(newest, func(a, b receiptDocument) int {
+		return bytes.Compare(b.ID[:], a.ID[:])
 	})
+	for _, doc := range newest[:min(latest, len(newest))] {
+		total.Latest = append(total.Latest, doc.toModel())
+	}
 
-	return totals, nil
+	return total, nil
 }
 
 // buildTotalQuery keeps a receipt OCR could not date inside its month by falling
@@ -431,9 +426,6 @@ func buildReceiptQuery(f ReceiptFilter) bson.D {
 	}
 	if f.GroupID != "" {
 		query = append(query, bson.E{Key: "groupId", Value: f.GroupID})
-	}
-	if f.Currency != "" {
-		query = append(query, bson.E{Key: "currency", Value: f.Currency})
 	}
 
 	if f.Merchant != "" {

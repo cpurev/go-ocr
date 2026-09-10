@@ -17,7 +17,7 @@ type fakeReceipts struct {
 	listRecentReceipts func(ctx context.Context, limit int) ([]model.Receipt, error)
 	updateReceipt      func(ctx context.Context, id string, update model.ReceiptUpdate) (model.Receipt, error)
 	deleteReceipt      func(ctx context.Context, id string) error
-	sumReceipts        func(ctx context.Context, q store.TotalQuery) ([]store.CurrencyTotal, error)
+	sumReceipts        func(ctx context.Context, q store.TotalQuery) (store.ReceiptTotal, error)
 }
 
 var _ store.ReceiptStore = (*fakeReceipts)(nil)
@@ -71,9 +71,9 @@ func (f *fakeReceipts) DeleteReceipt(ctx context.Context, id string) error {
 	return f.deleteReceipt(ctx, id)
 }
 
-func (f *fakeReceipts) SumReceipts(ctx context.Context, q store.TotalQuery) ([]store.CurrencyTotal, error) {
+func (f *fakeReceipts) SumReceipts(ctx context.Context, q store.TotalQuery) (store.ReceiptTotal, error) {
 	if f.sumReceipts == nil {
-		return nil, nil
+		return store.ReceiptTotal{}, nil
 	}
 	return f.sumReceipts(ctx, q)
 }

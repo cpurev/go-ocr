@@ -60,7 +60,6 @@ func (s *Server) addReply(ctx context.Context, req request) string {
 	fields := model.ReceiptFields{
 		Merchant: req.Cmd.Merchant,
 		Total:    req.Cmd.Total,
-		Currency: s.cfg.ReceiptCurrency,
 		Date:     req.Cmd.Date,
 	}
 
@@ -146,7 +145,7 @@ func formatReceiptLine(r model.Receipt) string {
 		merchant = "(no merchant)"
 	}
 
-	line := fmt.Sprintf("#%d %s, %.2f %s", r.Number, merchant, r.Total, r.Currency)
+	line := fmt.Sprintf("#%d %s, %.2f %s", r.Number, merchant, r.Total, model.Currency)
 	if r.Date == "" {
 		return line
 	}
@@ -161,9 +160,9 @@ func writeReceiptFields(b *strings.Builder, r model.Receipt) {
 	if r.Date != "" {
 		fmt.Fprintf(b, "Date: %s\n", r.Date)
 	}
-	fmt.Fprintf(b, "Total: %.2f %s\n", r.Total, r.Currency)
+	fmt.Fprintf(b, "Total: %.2f %s\n", r.Total, model.Currency)
 	if r.Tax > 0 {
-		fmt.Fprintf(b, "Tax: %.2f %s\n", r.Tax, r.Currency)
+		fmt.Fprintf(b, "Tax: %.2f %s\n", r.Tax, model.Currency)
 	}
 }
 
@@ -221,12 +220,12 @@ func (s *Server) editReply(ctx context.Context, req request) string {
 }
 
 func (s *Server) totalReply(ctx context.Context, req request) string {
-	q := store.TotalQuery{From: req.Cmd.Period.From, To: req.Cmd.Period.To}
+	q := store.TotalQuery{From: req.Cmd.Period.From, To: req.Cmd.Period.To, Latest: defaultRecent}
 	if req.Cmd.Scope == scopeSender {
 		q.UserID = req.Sender
 	}
 
-	totals, err := s.deps.Receipts.SumReceipts(ctx, q)
+	total, err := s.deps.Receipts.SumReceipts(ctx, q)
 	if errors.Is(err, store.ErrTooManyReceipts) {
 		return "That's more receipts than I can add up at once. Try a single month."
 	}
@@ -234,7 +233,7 @@ func (s *Server) totalReply(ctx context.Context, req request) string {
 		s.logger.Error("totalling receipts", "period", req.Cmd.Period.Label, "error", err)
 		return "Something went wrong adding up your receipts. Please try again."
 	}
-	if len(totals) == 0 {
+	if total.Count == 0 {
 		return fmt.Sprintf("I have no receipts for %s.", req.Cmd.Period.Label)
 	}
 
@@ -245,17 +244,19 @@ func (s *Server) totalReply(ctx context.Context, req request) string {
 	}
 	b.WriteString("*\n\n")
 
-	for _, t := range totals {
-		noun := "receipts"
-		if t.Count == 1 {
-			noun = "receipt"
-		}
+	noun := "receipts"
+	if total.Count == 1 {
+		noun = "receipt"
+	}
+	fmt.Fprintf(&b, "Total: %.2f %s (%d %s", total.Total, model.Currency, total.Count, noun)
+	if total.Undated > 0 {
+		fmt.Fprintf(&b, ", %d dated by when I got them", total.Undated)
+	}
+	b.WriteString(")\n\nLatest:\n")
 
-		fmt.Fprintf(&b, "%.2f %s (%d %s", t.Total, t.Currency, t.Count, noun)
-		if t.Undated > 0 {
-			fmt.Fprintf(&b, ", %d dated by when I got them", t.Undated)
-		}
-		b.WriteString(")\n")
+	for _, r := range total.Latest {
+		b.WriteString(formatReceiptLine(r))
+		b.WriteString("\n")
 	}
 
 	return b.String()

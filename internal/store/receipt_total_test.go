@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
+
+	"github.com/cpurev/go-ocr/internal/model"
 )
 
 func TestBuildTotalQuery(t *testing.T) {
@@ -64,62 +66,66 @@ func TestBuildTotalQuery(t *testing.T) {
 	}
 }
 
-func TestSumByCurrency(t *testing.T) {
+func TestSumReceipts(t *testing.T) {
+	arrived := func(day int) bson.ObjectID {
+		return bson.NewObjectIDFromTimestamp(time.Date(2026, time.September, day, 0, 0, 0, 0, time.UTC))
+	}
+	ica := receiptDocument{ID: arrived(2), Number: 45, Merchant: "ICA",
+		Currency: "SEK", Total: 100.10, Date: "2026-09-02"}
+	coop := receiptDocument{ID: arrived(3), Number: 46, Merchant: "Coop",
+		Currency: "SEK", Total: 54.43}
+	willys := receiptDocument{ID: arrived(5), Number: 47, Merchant: "Willys",
+		Currency: "USD", Total: 89, Date: "2026-09-04"}
+	ikea := receiptDocument{ID: arrived(6), Number: 48, Merchant: "Ikea",
+		Currency: "SEK", Total: 1085.97}
+
 	tests := []struct {
-		name string
-		docs []receiptDocument
-		want []CurrencyTotal
+		name   string
+		docs   []receiptDocument
+		latest int
+		want   ReceiptTotal
 	}{
 		{
-			name: "nothing to add up",
-			want: []CurrencyTotal{},
+			name:   "nothing to add up",
+			latest: 5,
+			want:   ReceiptTotal{},
 		},
 		{
-			name: "currencies are kept apart and undated receipts are counted",
-			docs: []receiptDocument{
-				{Currency: "SEK", Total: 100.10, Date: "2026-09-02"},
-				{Currency: "SEK", Total: 54.43},
-				{Currency: "EUR", Total: 89, Date: "2026-09-04"},
-				{Currency: "SEK", Total: 1085.97},
-			},
-			want: []CurrencyTotal{
-				{Currency: "SEK", Total: 1240.50, Count: 3, Undated: 2},
-				{Currency: "EUR", Total: 89, Count: 1},
-			},
+			name:   "one sum whatever the stored label, with the newest by arrival capped",
+			docs:   []receiptDocument{coop, ikea, ica, willys},
+			latest: 2,
+			want: ReceiptTotal{Total: 1329.50, Count: 4, Undated: 2,
+				Latest: []model.Receipt{ikea.toModel(), willys.toModel()}},
 		},
 		{
-			name: "equal totals fall back to the currency name",
-			docs: []receiptDocument{
-				{Currency: "USD", Total: 10, Date: "2026-09-01"},
-				{Currency: "EUR", Total: 10, Date: "2026-09-01"},
-			},
-			want: []CurrencyTotal{
-				{Currency: "EUR", Total: 10, Count: 1},
-				{Currency: "USD", Total: 10, Count: 1},
-			},
+			name:   "a cap past the count returns every receipt",
+			docs:   []receiptDocument{ica, willys},
+			latest: 5,
+			want: ReceiptTotal{Total: 189.10, Count: 2,
+				Latest: []model.Receipt{willys.toModel(), ica.toModel()}},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := sumByCurrency(tt.docs)
+			got, err := sumReceipts(tt.docs, tt.latest)
 			if err != nil {
-				t.Fatalf("sumByCurrency failed with %v", err)
+				t.Fatalf("sumReceipts failed with %v", err)
 			}
 			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("sumByCurrency gave %+v, want %+v", got, tt.want)
+				t.Errorf("sumReceipts gave %+v, want %+v", got, tt.want)
 			}
 		})
 	}
 }
 
-func TestSumByCurrencyRefusesMoreThanItCanHold(t *testing.T) {
+func TestSumReceiptsRefusesMoreThanItCanHold(t *testing.T) {
 	docs := make([]receiptDocument, maxTotalReceipts+1)
 
-	if _, err := sumByCurrency(docs); !errors.Is(err, ErrTooManyReceipts) {
+	if _, err := sumReceipts(docs, 5); !errors.Is(err, ErrTooManyReceipts) {
 		t.Errorf("summing %d receipts gave %v, want ErrTooManyReceipts", len(docs), err)
 	}
-	if _, err := sumByCurrency(docs[:maxTotalReceipts]); err != nil {
+	if _, err := sumReceipts(docs[:maxTotalReceipts], 5); err != nil {
 		t.Errorf("summing %d receipts failed with %v, want the limit to be inclusive",
 			maxTotalReceipts, err)
 	}

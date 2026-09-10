@@ -98,7 +98,6 @@ func (i *Ingester) Ingest(ctx context.Context, in model.ReceiptInput) (model.Rec
 			"merchant", receipt.Merchant,
 			"date", receipt.Date,
 			"total", receipt.Total,
-			"currency", receipt.Currency,
 			"line_items", len(receipt.LineItems),
 			"text_bytes", len(fields.RawText),
 		)

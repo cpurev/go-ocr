@@ -27,7 +27,6 @@ func showUpdate(u model.ReceiptUpdate) string {
 
 	text("merchant", u.Merchant)
 	text("date", u.Date)
-	text("currency", u.Currency)
 	money("subtotal", u.Subtotal)
 	money("tax", u.Tax)
 	money("total", u.Total)
@@ -118,8 +117,8 @@ var parseCommandTests = []parseCommandCase{
 		update: model.ReceiptUpdate{Total: ptr(154.53)}},
 	{text: "edit 7 total: 154.53, date: 2026-08-04", verb: "edit", number: 7,
 		update: model.ReceiptUpdate{Total: ptr(154.53), Date: ptr("2026-08-04")}},
-	{text: "edit 7 merchant: Willys, currency: SEK", verb: "edit", number: 7,
-		update: model.ReceiptUpdate{Merchant: ptr("Willys"), Currency: ptr("SEK")}},
+	// Every receipt is SEK, so currency is not a field and this is chat.
+	{text: "edit currency: SEK"},
 	{text: "edit merchant: ICA", verb: "edit",
 		update: model.ReceiptUpdate{Merchant: ptr("ICA")}},
 	{text: "edit total: 154.53", verb: "edit",

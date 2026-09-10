@@ -8,6 +8,9 @@ import (
 
 const DateLayout = "2006-01-02"
 
+// Currency is SEK because every receipt is Swedish, so a total is one number.
+const Currency = "SEK"
+
 const (
 	maxMerchantLen  = 200
 	maxRawTextRunes = 50_000
@@ -32,7 +35,6 @@ type Receipt struct {
 
 	Merchant  string     `json:"merchant"`
 	Date      string     `json:"date"`
-	Currency  string     `json:"currency"`
 	Subtotal  float64    `json:"subtotal"`
 	Tax       float64    `json:"tax"`
 	Total     float64    `json:"total"`
@@ -81,7 +83,6 @@ func (in ReceiptInput) Validate() ValidationErrors {
 type ReceiptFields struct {
 	Merchant  string
 	Date      string
-	Currency  string
 	Subtotal  float64
 	Tax       float64
 	Total     float64
@@ -98,7 +99,6 @@ func RoundMoney(v float64) float64 {
 
 func (f ReceiptFields) Normalize() ReceiptFields {
 	f.Merchant = truncateRunes(strings.TrimSpace(f.Merchant), maxMerchantLen)
-	f.Currency = strings.ToUpper(strings.TrimSpace(f.Currency))
 	f.RawText = truncateRunes(f.RawText, maxRawTextRunes)
 
 	f.Date = strings.TrimSpace(f.Date)
@@ -139,7 +139,6 @@ func (in ReceiptInput) NewReceipt(id string, fields ReceiptFields, now time.Time
 		GroupID:         strings.TrimSpace(in.GroupID),
 		Merchant:        clean.Merchant,
 		Date:            clean.Date,
-		Currency:        clean.Currency,
 		Subtotal:        clean.Subtotal,
 		Tax:             clean.Tax,
 		Total:           clean.Total,
