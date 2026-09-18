@@ -72,6 +72,8 @@ func (s *Server) handleWebhookReceive(w http.ResponseWriter, r *http.Request) {
 	// Handled inline, not in goroutines: Cloud Run throttles CPU once the
 	// response is written. That makes this slower than Meta's webhook timeout,
 	// so retries are the normal path and handleOnce turns them into no-ops.
+	s.recordSenders(r.Context(), n)
+
 	images := n.Images()
 	for _, img := range images {
 		if !s.allowed(img.From) {
@@ -103,7 +105,7 @@ func (s *Server) logFailedDeliveries(n whatsapp.Notification) {
 	for _, f := range n.Failures() {
 		if f.OutsideWindow() {
 			s.logger.Warn("whatsapp delivery failed: recipient never opened a 24h window",
-				"to", f.Recipient, "code", f.Code,
+				"to", f.Recipient, "code", f.Code, "message_id", f.MessageID,
 				"hint", "recipient must message the bot, or the text needs an approved template")
 			continue
 		}

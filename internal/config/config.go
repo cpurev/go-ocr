@@ -51,6 +51,9 @@ type Config struct {
 
 	MongoClaims string
 
+	MongoSeen   string
+	MongoOutbox string
+
 	StoreOverridesOCR bool
 }
 
@@ -69,6 +72,8 @@ func Load() (Config, error) {
 		MongoStores:   getString("MONGO_STORES_COLLECTION", "stores"),
 		MongoCounters: getString("MONGO_COUNTERS_COLLECTION", "counters"),
 		MongoClaims:   getString("MONGO_CLAIMS_COLLECTION", "claims"),
+		MongoSeen:     getString("MONGO_SEEN_COLLECTION", "seen"),
+		MongoOutbox:   getString("MONGO_OUTBOX_COLLECTION", "outbox"),
 
 		WhatsAppToken:       getString("WHATSAPP_TOKEN", ""),
 		WhatsAppAPIBase:     getString("WHATSAPP_API_BASE", "https://graph.facebook.com/v21.0"),

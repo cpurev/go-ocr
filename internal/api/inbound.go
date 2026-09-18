@@ -76,11 +76,7 @@ func (s *Server) handleOnce(ctx context.Context, messageID string, work func(con
 		return
 	}
 
-	budget := s.cfg.MongoTimeout
-	if budget <= 0 {
-		budget = defaultClaimTimeout
-	}
-	claimCtx, cancel := context.WithTimeout(ctx, budget)
+	claimCtx, cancel := context.WithTimeout(ctx, s.storeBudget())
 	err := s.deps.Claims.Claim(claimCtx, messageID)
 	cancel()
 
@@ -115,7 +111,9 @@ func (s *Server) release(ctx context.Context, messageID string) {
 	}
 }
 
-// deliver is the only place in the server that sends a WhatsApp message.
+// deliver is the only place in the server that sends a WhatsApp message in
+// answer to one. A roster member whose 24-hour window is closed would lose the
+// relay, so theirs is held for later and the sender is told once.
 func (s *Server) deliver(ctx context.Context, r Reply) {
 	if r.Silent() || s.deps.Replier == nil {
 		return
@@ -126,37 +124,69 @@ func (s *Server) deliver(ctx context.Context, r Reply) {
 	// with it.
 	ctx = context.WithoutCancel(ctx)
 
-	if r.Audience != audienceOthers {
-		s.send(ctx, r.Sender, r.Body)
-	}
+	var reach, waiting []string
 	if r.Audience != audienceSender {
 		for _, other := range s.deps.Relay.Others(r.Sender) {
-			s.send(ctx, other, attribute(r.Sender, r.Body))
+			if s.windowOpen(ctx, other) {
+				reach = append(reach, other)
+				continue
+			}
+			pending, err := s.hold(ctx, store.HeldMessage{
+				To: other, From: r.Sender, Body: r.Body, HeldAt: time.Now(),
+			})
+			if err != nil {
+				// Trying beats keeping it nowhere; Meta may still take it.
+				reach = append(reach, other)
+				continue
+			}
+			if pending == 1 {
+				waiting = append(waiting, other)
+			}
 		}
+	}
+
+	notice := heldNotice(waiting)
+	switch {
+	case r.Audience != audienceOthers:
+		s.send(ctx, r.Sender, withNotice(r.Body, notice))
+	case notice != "":
+		s.send(ctx, r.Sender, notice)
+	}
+
+	for _, other := range reach {
+		s.send(ctx, other, attribute(r.Sender, r.Body))
 	}
 }
 
-// send posts one message and classifies the outcome. It never returns an error
-// because a closed 24-hour window on one recipient must not stop the fan-out.
+// send posts one message and logs the outcome. It never returns an error
+// because one recipient failing must not stop the fan-out.
 func (s *Server) send(ctx context.Context, to, body string) {
+	_ = s.trySend(ctx, to, body)
+}
+
+// trySend posts one message, logs the outcome, and reports it to callers that
+// can do something about a failure.
+func (s *Server) trySend(ctx context.Context, to, body string) error {
 	if to == "" {
-		return
+		return nil
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, replyTimeout)
 	defer cancel()
 
-	err := s.deps.Replier.SendText(ctx, to, body)
+	messageID, err := s.deps.Replier.SendText(ctx, to, body)
 	switch {
 	case errors.Is(err, whatsapp.ErrOutsideWindow):
 		s.logger.Warn("whatsapp reply dropped: recipient's 24h window is closed",
 			"to", to, "hint", "recipient must message the bot to reopen it")
-		return
+		return err
 	case err != nil:
 		s.logger.Error("sending whatsapp reply", "to", to, "error", err)
-		return
+		return err
 	}
-	s.logger.Info("whatsapp reply sent", "to", to, "body_bytes", len(body))
+	// Accepted, not delivered: a later failed status carries this message_id.
+	s.logger.Info("whatsapp reply sent", "to", to, "message_id", messageID, "body_bytes", len(body))
+	return nil
 }
 
 // attribute labels a relayed message with who sent it.

@@ -3,6 +3,7 @@ package whatsapp
 import (
 	"encoding/json"
 	"testing"
+	"time"
 )
 
 // Meta accepts a send to a recipient who never messaged the business number,
@@ -57,5 +58,31 @@ func TestDeliveredStatusIsNotAFailure(t *testing.T) {
 
 	if got := len(n.Failures()); got != 0 {
 		t.Errorf("got %d failures for a delivered status, want 0", got)
+	}
+}
+
+func TestSendersCountsEveryMessageTypeAtItsSendTime(t *testing.T) {
+	now := time.Unix(2_000_000_000, 0)
+	n := Notification{Entry: []Entry{{Changes: []Change{{Value: ChangeValue{Messages: []Message{
+		{From: "46", Timestamp: "1999999000", Type: "sticker"},
+		{From: "46", Timestamp: "1999999500", Type: "text"},
+		{From: "39", Timestamp: "garbage", Type: "audio"},
+		{From: "47", Timestamp: "2000000999", Type: "text"},
+	}}}}}}}
+
+	got := n.Senders(now)
+
+	want := []InboundSender{
+		{From: "46", At: time.Unix(1999999500, 0)},
+		{From: "39", At: now},
+		{From: "47", At: now},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("Senders = %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i].From != want[i].From || !got[i].At.Equal(want[i].At) {
+			t.Errorf("Senders[%d] = %+v, want %+v", i, got[i], want[i])
+		}
 	}
 }

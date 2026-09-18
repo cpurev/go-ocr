@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cpurev/go-ocr/internal/config"
 	"github.com/cpurev/go-ocr/internal/relay"
@@ -22,6 +23,7 @@ func newGatedServer(t *testing.T, numbers []string) (http.Handler, *fakeReplier)
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Deps{Replier: rep, Relay: relay.New(numbers)},
 	)
+	seenAt(t, srv, time.Now().Add(-time.Minute), srv.deps.Relay.Members()...)
 	return srv.Routes(), rep
 }
 

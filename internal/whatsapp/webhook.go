@@ -4,6 +4,8 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"strconv"
+	"time"
 )
 
 const SignatureHeader = "X-Hub-Signature-256"
@@ -106,6 +108,56 @@ func (n Notification) Texts() []InboundText {
 		}
 	}
 	return texts
+}
+
+// InboundSender is someone who wrote to the business number, and when.
+type InboundSender struct {
+	From string
+	At   time.Time
+}
+
+// Senders lists who wrote in this notification, one entry per number at its
+// latest message. Every message type counts, not only the ones the bot acts
+// on: a sticker or a voice note opens the 24-hour service window just as a
+// text does.
+func (n Notification) Senders(now time.Time) []InboundSender {
+	var senders []InboundSender
+	index := make(map[string]int)
+
+	for _, entry := range n.Entry {
+		for _, change := range entry.Changes {
+			for _, msg := range change.Value.Messages {
+				if msg.From == "" {
+					continue
+				}
+				at := msg.SentAt(now)
+				if i, ok := index[msg.From]; ok {
+					if at.After(senders[i].At) {
+						senders[i].At = at
+					}
+					continue
+				}
+				index[msg.From] = len(senders)
+				senders = append(senders, InboundSender{From: msg.From, At: at})
+			}
+		}
+	}
+	return senders
+}
+
+// SentAt is when the sender sent msg, which is what the 24-hour window counts
+// from. Meta retries a webhook for hours, so the delivery time would overstate
+// the window. A missing, unreadable, or future timestamp falls back to now.
+func (msg Message) SentAt(now time.Time) time.Time {
+	secs, err := strconv.ParseInt(msg.Timestamp, 10, 64)
+	if err != nil || secs <= 0 {
+		return now
+	}
+	at := time.Unix(secs, 0)
+	if at.After(now) {
+		return now
+	}
+	return at
 }
 
 type Status struct {

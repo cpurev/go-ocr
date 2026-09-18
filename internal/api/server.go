@@ -29,6 +29,9 @@ type Deps struct {
 	Relay *relay.Roster
 
 	Claims store.MessageClaims
+
+	// Outbox holds relays for roster members whose 24-hour window is closed.
+	Outbox store.Outbox
 }
 
 type StoreDirectory interface {
@@ -37,7 +40,8 @@ type StoreDirectory interface {
 }
 
 type Replier interface {
-	SendText(ctx context.Context, to, body string) error
+	// SendText returns the message id Meta assigned to the accepted text.
+	SendText(ctx context.Context, to, body string) (string, error)
 }
 
 type Server struct {
@@ -52,6 +56,10 @@ func NewServer(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 	// store, which is the branch that would put the duplicate reply back.
 	if deps.Claims == nil {
 		deps.Claims = store.NewMemoryClaims(store.ClaimLease)
+	}
+	// Same for the outbox: a nil one would put back the silent relay loss.
+	if deps.Outbox == nil {
+		deps.Outbox = store.NewMemoryOutbox()
 	}
 
 	return &Server{

@@ -281,9 +281,17 @@ id: 6a759c94d7732138775c0dd8
 ```
 
 Failures answer too, and say what to do about them: an expired media id asks for
-the photo again, an unreadable image asks for better light. Sending needs no
+the photo again, an unreadable image asks for better light. Replying needs no
 message templates, because a reply always lands inside WhatsApp's 24-hour
 customer service window.
+
+A relay does not: it goes to the *other* phone, whose window is open only if that
+person wrote to the bot in the last 24 hours. Outside it Meta accepts the send
+with a 200 and then fails it with error 131047, so the text would be lost. The
+bot records when each participant last wrote (`MONGO_SEEN_COLLECTION`), holds a
+relay for anyone whose window is closed (`MONGO_OUTBOX_COLLECTION`), tells the
+sender once, and delivers everything held, labelled with when it was sent, the
+next time that person sends the bot anything.
 
 ### Commands
 
@@ -424,6 +432,8 @@ Everything is optional. Each integration boots only when its variable is set:
 | `MONGO_STORES_COLLECTION`   | `stores`       | the learned registration-number to merchant directory |
 | `MONGO_COUNTERS_COLLECTION` | `counters`     | sequence counters; what gives each receipt its short number |
 | `MONGO_CLAIMS_COLLECTION`   | `claims`       | message-id claims; what makes a Meta redelivery a no-op |
+| `MONGO_SEEN_COLLECTION`     | `seen`         | when each participant last wrote; decides whether their 24h window is open |
+| `MONGO_OUTBOX_COLLECTION`   | `outbox`       | relays held for a closed window, delivered when that participant next writes |
 | `STORE_OVERRIDES_OCR`       | `false`        | `true` lets a learned merchant beat the OCR-read one; `false` fills only a blank |
 | `WHATSAPP_TIMEOUT`          | `20s`          | budget for the two media calls             |
 | `MEDIA_MAX_BYTES`           | `10MB`         | max image size (accepts `10MB`, `512KB`)   |

@@ -73,16 +73,34 @@ type textPayload struct {
 	Body       string `json:"body"`
 }
 
-// SendText sends a 1:1 message to a phone number.
-func (s *Sender) SendText(ctx context.Context, to, body string) error {
+type sendResponse struct {
+	Messages []struct {
+		ID string `json:"id"`
+	} `json:"messages"`
+}
+
+// sentMessageID returns the wamid Meta assigned, or "" if the body has none.
+func sentMessageID(body []byte) string {
+	var r sendResponse
+	if err := json.Unmarshal(body, &r); err != nil || len(r.Messages) == 0 {
+		return ""
+	}
+	return r.Messages[0].ID
+}
+
+// SendText sends a 1:1 message to a phone number and returns the message id
+// Meta assigned. A 200 only means Meta accepted the text; whether it arrived
+// comes later as a status callback carrying this same id, so the id is the
+// only way to tell which message a delivery failure was about.
+func (s *Sender) SendText(ctx context.Context, to, body string) (string, error) {
 	if strings.TrimSpace(to) == "" {
-		return fmt.Errorf("whatsapp: empty recipient")
+		return "", fmt.Errorf("whatsapp: empty recipient")
 	}
 	if strings.TrimSpace(body) == "" {
-		return fmt.Errorf("whatsapp: empty message body")
+		return "", fmt.Errorf("whatsapp: empty message body")
 	}
 	if s.phoneNumberID == "" {
-		return fmt.Errorf("whatsapp: no phone number id configured")
+		return "", fmt.Errorf("whatsapp: no phone number id configured")
 	}
 
 	if len([]rune(body)) > maxTextBody {
@@ -97,38 +115,38 @@ func (s *Sender) SendText(ctx context.Context, to, body string) error {
 		Text:             textPayload{PreviewURL: false, Body: body},
 	})
 	if err != nil {
-		return fmt.Errorf("whatsapp: encoding message: %w", err)
+		return "", fmt.Errorf("whatsapp: encoding message: %w", err)
 	}
 
 	url := s.baseURL + "/" + s.phoneNumberID + "/messages"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
-		return fmt.Errorf("whatsapp: building send request: %w", err)
+		return "", fmt.Errorf("whatsapp: building send request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+s.token)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := s.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("whatsapp: sending message: %w", redactURLError(err))
+		return "", fmt.Errorf("whatsapp: sending message: %w", redactURLError(err))
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
 	if err != nil {
-		return fmt.Errorf("whatsapp: reading send response: %w", err)
+		return "", fmt.Errorf("whatsapp: reading send response: %w", err)
 	}
 
 	switch {
 	case resp.StatusCode == http.StatusUnauthorized, resp.StatusCode == http.StatusForbidden:
-		return ErrUnauthorized
+		return "", ErrUnauthorized
 	case resp.StatusCode >= 300:
 		if graphErrorCode(respBody) == errCodeReEngagement {
-			return ErrOutsideWindow
+			return "", ErrOutsideWindow
 		}
-		return fmt.Errorf("whatsapp: send failed with status %d: %s",
+		return "", fmt.Errorf("whatsapp: send failed with status %d: %s",
 			resp.StatusCode, firstLine(string(respBody)))
 	}
 
-	return nil
+	return sentMessageID(respBody), nil
 }

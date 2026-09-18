@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/cpurev/go-ocr/internal/config"
 	"github.com/cpurev/go-ocr/internal/relay"
@@ -17,6 +18,9 @@ type fakeReplier struct {
 	mu   sync.Mutex
 	sent []sentMessage
 	err  error
+
+	// failTo, when set, makes sends to that one number fail with err.
+	failTo string
 }
 
 type sentMessage struct {
@@ -24,11 +28,17 @@ type sentMessage struct {
 	body string
 }
 
-func (f *fakeReplier) SendText(_ context.Context, to, body string) error {
+func (f *fakeReplier) SendText(_ context.Context, to, body string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.sent = append(f.sent, sentMessage{to: to, body: body})
-	return f.err
+	if f.failTo != "" && to != f.failTo {
+		return "wamid.FAKE", nil
+	}
+	if f.err != nil {
+		return "", f.err
+	}
+	return "wamid.FAKE", nil
 }
 
 func (f *fakeReplier) recipients() []string {
@@ -47,6 +57,8 @@ const (
 	stranger = "97699999999"
 )
 
+// newTestServer builds a server whose roster members all wrote to the bot a
+// minute ago, so every 24-hour window is open unless a test closes one.
 func newTestServer(t *testing.T, numbers []string) (*Server, *fakeReplier) {
 	t.Helper()
 
@@ -56,7 +68,19 @@ func newTestServer(t *testing.T, numbers []string) (*Server, *fakeReplier) {
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Deps{Replier: rep, Relay: relay.New(numbers)},
 	)
+	seenAt(t, srv, time.Now().Add(-time.Minute), srv.deps.Relay.Members()...)
 	return srv, rep
+}
+
+// seenAt records numbers as having last written to the bot at at.
+func seenAt(t *testing.T, srv *Server, at time.Time, numbers ...string) {
+	t.Helper()
+
+	for _, n := range numbers {
+		if err := srv.deps.Outbox.Seen(context.Background(), n, at); err != nil {
+			t.Fatalf("seeding %s as seen: %v", n, err)
+		}
+	}
 }
 
 func TestBroadcastFansOutToRoster(t *testing.T) {
