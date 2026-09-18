@@ -40,7 +40,42 @@ func (t *Tesseract) Available() error {
 		return fmt.Errorf("%w: %q not found on PATH (brew install tesseract): %w",
 			ErrEngineUnavailable, t.binary, err)
 	}
+	return t.languagesInstalled()
+}
+
+// languagesInstalled checks every language in -l. Tesseract missing one prints
+// "Failed loading language" and still exits 0 with whatever it could load, so
+// without this check a missing swe would degrade every scan without an error.
+func (t *Tesseract) languagesInstalled() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	out, err := exec.CommandContext(ctx, t.binary, "--list-langs").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%w: listing tesseract languages: %w", ErrEngineUnavailable, err)
+	}
+	if missing := missingLanguages(t.lang, string(out)); len(missing) > 0 {
+		return fmt.Errorf("%w: tesseract language data not installed: %s",
+			ErrLanguageMissing, strings.Join(missing, ", "))
+	}
 	return nil
+}
+
+// missingLanguages returns the parts of a "swe+eng" spec absent from the
+// output of tesseract --list-langs, whose first line is a header.
+func missingLanguages(spec, listing string) []string {
+	installed := make(map[string]bool)
+	for _, line := range strings.Split(listing, "\n") {
+		installed[strings.TrimSpace(line)] = true
+	}
+
+	var missing []string
+	for _, lang := range strings.Split(spec, "+") {
+		if lang = strings.TrimSpace(lang); lang != "" && !installed[lang] {
+			missing = append(missing, lang)
+		}
+	}
+	return missing
 }
 
 func (t *Tesseract) Text(ctx context.Context, image []byte) (string, error) {
@@ -69,6 +104,11 @@ func (t *Tesseract) Text(ctx context.Context, image []byte) (string, error) {
 		}
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return "", fmt.Errorf("ocr: tesseract timed out after %s", t.timeout)
+		}
+		// A cancelled caller killed the process; the image was never judged,
+		// so calling it unreadable would tell the user to resend a good photo.
+		if err := ctx.Err(); err != nil {
+			return "", fmt.Errorf("ocr: tesseract: %w", err)
 		}
 
 		return "", fmt.Errorf("%w: tesseract: %w: %s",

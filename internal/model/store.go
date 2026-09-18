@@ -16,16 +16,49 @@ type Store struct {
 
 var orgNrDigitsRe = regexp.MustCompile(`\D`)
 
+// NormalizeOrgNr reduces an org.nr to its 10 digits. The VAT form
+// "SE556036079301" is the org.nr wrapped in "SE" and "01", so its 12 digits
+// lose the trailing "01", not the leading "55" that a plain last-10 cut would
+// keep. Any other longer run (a "16" century prefix) keeps its last 10 digits.
 func NormalizeOrgNr(s string) string {
 	digits := orgNrDigitsRe.ReplaceAllString(s, "")
+	if len(digits) == 12 && strings.HasSuffix(digits, "01") {
+		return digits[:10]
+	}
 	if len(digits) > 10 {
 		digits = digits[len(digits)-10:]
 	}
 	return digits
 }
 
+// ValidOrgNr reports whether a normalized org.nr is one we may key the store
+// directory on. A wrong number gets learned and then renames other people's
+// receipts, so it must pass the Luhn check digit, and its third digit must be
+// at least 2: org numbers put 20+ in the month position, which a personnummer
+// (a customer's, printed on the same receipt) never does.
 func ValidOrgNr(normalized string) bool {
-	return len(normalized) == 10
+	if len(normalized) != 10 || orgNrDigitsRe.MatchString(normalized) {
+		return false
+	}
+	return normalized[2] >= '2' && luhnValid(normalized)
+}
+
+// luhnValid checks the Luhn check digit that closes every Swedish org.nr.
+func luhnValid(digits string) bool {
+	sum := 0
+	double := false
+	for i := len(digits) - 1; i >= 0; i-- {
+		d := int(digits[i] - '0')
+		if double {
+			d *= 2
+			if d > 9 {
+				d -= 9
+			}
+		}
+		sum += d
+		double = !double
+	}
+	return sum%10 == 0
 }
 
 func NewStore(id, orgNr, merchant string, now time.Time) Store {

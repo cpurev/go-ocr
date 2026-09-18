@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/cpurev/go-ocr/internal/model"
 )
@@ -28,8 +30,10 @@ var (
 
 	numericDateRe = regexp.MustCompile(`\b(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})\b`)
 
-	textDateDMYRe = regexp.MustCompile(`(?i)\b(\d{1,2})\s+([a-z]{3,9})\.?,?\s+(\d{2,4})\b`)
-	textDateMDYRe = regexp.MustCompile(`(?i)\b([a-z]{3,9})\.?\s+(\d{1,2}),?\s+(\d{2,4})\b`)
+	// [ \t]+, not \s+: a date is printed on one line. \s+ let "3,05" and
+	// "Marabou 29,90" on the next line read as 5 March 2029.
+	textDateDMYRe = regexp.MustCompile(`(?i)\b(\d{1,2})[ \t]+([a-z]{3,9})\.?,?[ \t]+(\d{2,4})\b`)
+	textDateMDYRe = regexp.MustCompile(`(?i)\b([a-z]{3,9})\.?[ \t]+(\d{1,2}),?[ \t]+(\d{2,4})\b`)
 
 	amountWithCodeRe = regexp.MustCompile(
 		`([-+]?(?:\d{1,3}(?:[ ,.]\d{3})+|\d+)(?:[.,]\d{1,2})?)\s*(?:` + currencyCodes + `)\b`)
@@ -39,6 +43,8 @@ var (
 	qtyPrefixRe = regexp.MustCompile(`^(\d{1,3})\s*[xX*×]?\s+(.*)$`)
 
 	qtySuffixRe = regexp.MustCompile(`^(.*?)\s+[xX×]\s*(\d{1,3})$`)
+
+	qtyColumnRe = regexp.MustCompile(`^(\d{1,3}) (\d{3}(?:[.,]\d{1,2})?)$`)
 )
 
 var currencySymbols = []string{"$", "€", "£", "¥", "₮", "₩", "₹"}
@@ -59,6 +65,48 @@ var (
 		"orgnr", "org nr", "aid:", "tsi:", "term:", "kvitto", "öppet", "oppet",
 		"kontakt", "butik", "moms reg",
 	}
+
+	// paymentWords mark how the receipt was paid, not what was bought: "Kort
+	// 35,00" repeats the total and "Tillbaka 15,00" is change. They are
+	// matched as whole words because "tid" and "kort" are also parts of item
+	// names ("Tidning", "Kortlek").
+	paymentWords = []string{
+		"kort", "bankkort", "kreditkort", "betalkort", "kortbetalning",
+		"kontant", "kontanter", "kontantbetalning", "växel", "vaxel", "tillbaka",
+		"betalt", "betalning", "erhållet", "swish", "kassa", "kassör",
+		"datum", "tid", "telefon", "tel",
+	}
+
+	// registrationWords mark a line that carries an org.nr or VAT number. Its
+	// digits are an identifier; read as money, "Momsreg.nr SE556036079301"
+	// became a tax of 556 036 079 301 kr.
+	registrationWords = []string{
+		"org.nr", "org nr", "orgnr", "organisationsnummer", "momsreg", "moms reg",
+		"reg.nr", "reg nr", "regnr", "vat no", "vat nr", "vat reg", "vat number",
+	}
+
+	// payableWords name the amount actually charged. They beat a bare
+	// "Totalt", which some receipts also print before a deposit or discount.
+	payableWords = []string{"att betala", "total due", "amount due", "balance due", "grand total"}
+
+	// savingsWords mark a line that totals a discount ("Totalt sparat 5,00"),
+	// not the receipt.
+	savingsWords = []string{"spar", "rabatt", "avdrag", "discount", "you saved"}
+
+	// "Totalt inkl. moms" is the total and "Summa exkl. moms" the net: the word
+	// moms there qualifies the amount, it does not make the line the tax.
+	inclVATWords = []string{"inkl", "incl"}
+	exclVATWords = []string{"exkl", "excl", "ex moms", "ex. moms"}
+)
+
+type lineKind int
+
+const (
+	kindOther lineKind = iota
+	kindSubtotal
+	kindTax
+	kindTotal
+	kindPayable
 )
 
 func (p *Parser) Parse(raw string) model.ReceiptFields {
@@ -107,6 +155,13 @@ func (p *Parser) findDate(raw string) string {
 		}
 	}
 
+	// A numeric date is unambiguous about which digits are the date; a text
+	// pattern can still catch a price next to a word, so it only gets a turn
+	// when no numeric date exists.
+	if d := p.numericDate(raw); d != "" {
+		return d
+	}
+
 	if m := textDateDMYRe.FindStringSubmatch(raw); m != nil {
 		if month, ok := monthFromName(m[2]); ok {
 			if d, ok := buildDate(expandYear(atoi(m[3])), month, atoi(m[1])); ok {
@@ -122,6 +177,10 @@ func (p *Parser) findDate(raw string) string {
 		}
 	}
 
+	return ""
+}
+
+func (p *Parser) numericDate(raw string) string {
 	if m := numericDateRe.FindStringSubmatch(raw); m != nil {
 		first, second, year := atoi(m[1]), atoi(m[2]), expandYear(atoi(m[3]))
 
@@ -144,38 +203,101 @@ func (p *Parser) findDate(raw string) string {
 }
 
 func (p *Parser) findTotals(lines []string) (subtotal, tax, total float64) {
+	var payable float64
 	for i := len(lines) - 1; i >= 0; i-- {
-		lower := strings.ToLower(lines[i])
+		kind := classifyLine(strings.ToLower(lines[i]))
+		if kind == kindOther {
+			continue
+		}
+
+		if kind == kindTax {
+			if amount, ok := taxAmount(lines[i]); ok && tax == 0 {
+				tax = amount
+			}
+			continue
+		}
 
 		amount, ok := lastAmount(lines[i])
 		if !ok {
 			continue
 		}
-
 		switch {
-		case subtotal == 0 && containsAny(lower, subtotalWords):
+		case kind == kindSubtotal && subtotal == 0:
 			subtotal = amount
-		case tax == 0 && containsAny(lower, taxWords) && !containsAny(lower, subtotalWords):
-			tax = amount
-		case total == 0 && containsAny(lower, totalWords) && !containsAny(lower, subtotalWords):
+		case kind == kindPayable && payable == 0:
+			payable = amount
+		case kind == kindTotal && total == 0:
 			total = amount
 		}
 	}
+	if payable > 0 {
+		total = payable
+	}
 
 	if total == 0 {
-		for i := len(lines) - 1; i >= 0; i-- {
-			m := amountWithCodeRe.FindStringSubmatch(lines[i])
-			if m == nil {
-				continue
-			}
-			if amount, ok := parseAmount(m[1]); ok && amount > 0 {
-				total = amount
-				break
-			}
-		}
+		total = amountWithCurrency(lines)
 	}
 
 	return subtotal, tax, total
+}
+
+// classifyLine says which of the receipt's sums a line states, if any.
+// Registration and savings lines come first because they borrow the words of
+// the others ("Momsreg.nr", "Totalt sparat"), and inkl/exkl moms come before
+// the tax words because on those lines moms qualifies a total.
+func classifyLine(lower string) lineKind {
+	switch {
+	case containsAny(lower, registrationWords), containsAny(lower, savingsWords):
+		return kindOther
+	case containsAny(lower, payableWords):
+		return kindPayable
+	case containsAny(lower, subtotalWords), containsAny(lower, exclVATWords):
+		return kindSubtotal
+	case containsAny(lower, inclVATWords):
+		return kindTotal
+	case containsAny(lower, taxWords):
+		return kindTax
+	case containsAny(lower, totalWords):
+		return kindTotal
+	}
+	return kindOther
+}
+
+// taxAmount reads the tax from a VAT line. A VAT table row prints rate, tax,
+// net and gross ("Moms 25% 25,60 102,40 128,00"), so the last amount is the
+// gross. The tax is the smallest amount on the row: at every Swedish rate
+// (6, 12, 25 %) it is below both net and gross, whatever the column order.
+func taxAmount(line string) (float64, bool) {
+	var best float64
+	for _, text := range amountTexts(line) {
+		v, ok := parseAmount(text)
+		if !ok || v <= 0 {
+			continue
+		}
+		if best == 0 || v < best {
+			best = v
+		}
+	}
+	return best, best > 0
+}
+
+// amountWithCurrency is the fallback total: the bottom-most "… SEK" amount
+// not on a payment line. Tendered cash and change carry SEK too, and the
+// change ("Tillbaka 15,00 SEK") is usually the last one printed.
+func amountWithCurrency(lines []string) float64 {
+	for i := len(lines) - 1; i >= 0; i-- {
+		if containsWord(strings.ToLower(lines[i]), paymentWords) {
+			continue
+		}
+		m := amountWithCodeRe.FindStringSubmatch(lines[i])
+		if m == nil {
+			continue
+		}
+		if amount, ok := parseAmount(m[1]); ok && amount > 0 {
+			return amount
+		}
+	}
+	return 0
 }
 
 func (p *Parser) findLineItems(lines []string) []model.LineItem {
@@ -185,7 +307,8 @@ func (p *Parser) findLineItems(lines []string) []model.LineItem {
 		lower := strings.ToLower(line)
 
 		if containsAny(lower, subtotalWords) || containsAny(lower, taxWords) ||
-			containsAny(lower, totalWords) || containsAny(lower, noiseWords) {
+			containsAny(lower, totalWords) || containsAny(lower, noiseWords) ||
+			containsAny(lower, registrationWords) || containsWord(lower, paymentWords) {
 			continue
 		}
 
@@ -201,7 +324,8 @@ func (p *Parser) findLineItems(lines []string) []model.LineItem {
 		if amountText == "" {
 			continue
 		}
-		price, ok := parseAmount(amountText)
+		columnQty, priceText := splitQuantityColumn(amountText)
+		price, ok := parseAmount(priceText)
 		if !ok || price == 0 {
 			continue
 		}
@@ -216,11 +340,11 @@ func (p *Parser) findLineItems(lines []string) []model.LineItem {
 			continue
 		}
 
-		qty := 1
-		if m := qtyPrefixRe.FindStringSubmatch(name); m != nil && hasLetters(m[2]) {
+		qty := columnQty
+		if m := qtyPrefixRe.FindStringSubmatch(name); m != nil && hasLetters(m[2]) && columnQty == 1 {
 			qty = atoi(m[1])
 			name = strings.TrimSpace(m[2])
-		} else if m := qtySuffixRe.FindStringSubmatch(name); m != nil && hasLetters(m[1]) {
+		} else if m := qtySuffixRe.FindStringSubmatch(name); m != nil && hasLetters(m[1]) && columnQty == 1 {
 			qty = atoi(m[2])
 			name = strings.TrimSpace(m[1])
 		}
@@ -234,12 +358,27 @@ func (p *Parser) findLineItems(lines []string) []model.LineItem {
 	return items
 }
 
+// splitQuantityColumn separates "2 135,00" into quantity 2 and price 135,00.
+// The text is ambiguous: a space is also the Swedish thousands separator, so
+// it could be 2 135,00 kr. On an item line we read it as qty + price, because
+// grocery receipts print those as neighbouring columns and a single item over
+// 1 000 kr is rare, while the misread multiplies a bun's price by ten. Totals
+// never go through here, so "Totalt 1 234,50" stays 1234.50.
+func splitQuantityColumn(amountText string) (qty int, price string) {
+	m := qtyColumnRe.FindStringSubmatch(strings.TrimSpace(amountText))
+	if m == nil {
+		return 1, amountText
+	}
+	return max(atoi(m[1]), 1), m[2]
+}
+
 func (p *Parser) reconcile(f *model.ReceiptFields) {
-	switch {
-	case f.Total == 0 && f.Subtotal > 0:
+	// Nothing on a receipt is negative except a discount line, so a negative
+	// sum is a misread; 0 says "unknown" and lets the user fill it in.
+	f.Subtotal, f.Tax, f.Total = max(f.Subtotal, 0), max(f.Tax, 0), max(f.Total, 0)
+
+	if f.Total == 0 && f.Subtotal > 0 {
 		f.Total = f.Subtotal + f.Tax
-	case f.Subtotal == 0 && f.Total > 0:
-		f.Subtotal = f.Total - f.Tax
 	}
 
 	if f.Total == 0 && len(f.LineItems) > 0 {
@@ -247,10 +386,20 @@ func (p *Parser) reconcile(f *model.ReceiptFields) {
 		for _, item := range f.LineItems {
 			sum += item.Price * float64(max(item.Qty, 1))
 		}
-		f.Total = sum
+		f.Total = max(sum, 0)
 		if f.Subtotal == 0 {
-			f.Subtotal = sum
+			f.Subtotal = f.Total
 		}
+	}
+
+	// Tax is a share of the total, so one at or above it came from some
+	// other number on a moms line.
+	if f.Tax >= f.Total && f.Total > 0 {
+		f.Tax = 0
+	}
+
+	if f.Subtotal == 0 && f.Total > 0 {
+		f.Subtotal = f.Total - f.Tax
 	}
 }
 
@@ -276,13 +425,37 @@ func lastAmount(line string) (float64, bool) {
 }
 
 func lastAmountText(line string) string {
-	matches := amountRe.FindAllString(line, -1)
-	for i := len(matches) - 1; i >= 0; i-- {
-		if strings.ContainsAny(matches[i], "0123456789") {
-			return matches[i]
-		}
+	texts := amountTexts(line)
+	if len(texts) == 0 {
+		return ""
 	}
-	return ""
+	return texts[len(texts)-1]
+}
+
+// amountTexts lists the numbers on a line that can be money. A percentage is
+// a rate, not money. A sign glued to a digit is a hyphen inside an identifier
+// ("556036-0793", "08-123 45"), so the line's last number is no price at all:
+// taking it gave an item of -793 kr.
+func amountTexts(line string) []string {
+	var out []string
+	for _, loc := range amountRe.FindAllStringIndex(line, -1) {
+		text := line[loc[0]:loc[1]]
+		if !strings.ContainsAny(text, "0123456789") {
+			continue
+		}
+		if (text[0] == '-' || text[0] == '+') && loc[0] > 0 && isDigit(line[loc[0]-1]) {
+			return nil
+		}
+		if strings.HasPrefix(strings.TrimLeft(line[loc[1]:], " \t"), "%") {
+			continue
+		}
+		out = append(out, text)
+	}
+	return out
+}
+
+func isDigit(b byte) bool {
+	return b >= '0' && b <= '9'
 }
 
 func parseAmount(s string) (float64, bool) {
@@ -338,33 +511,54 @@ func expandYear(y int) int {
 	}
 }
 
-func monthFromName(name string) (int, bool) {
-	name = strings.ToLower(strings.TrimSuffix(name, "."))
-	if len(name) < 3 {
-		return 0, false
-	}
-	months := []string{
-		"january", "february", "march", "april", "may", "june",
-		"july", "august", "september", "october", "november", "december",
-	}
-	for i, m := range months {
-		if strings.HasPrefix(m, name[:3]) && strings.HasPrefix(m, name) {
-			return i + 1, true
-		}
-	}
+// monthNames holds whole month names and printed abbreviations, Swedish and
+// English. Only these count: matching any word on its first three letters
+// read "Marabou" as March.
+var monthNames = map[string]int{
+	"jan": 1, "januari": 1, "january": 1,
+	"feb": 2, "februari": 2, "february": 2,
+	"mar": 3, "mars": 3, "march": 3,
+	"apr": 4, "april": 4,
+	"maj": 5, "may": 5,
+	"jun": 6, "juni": 6, "june": 6,
+	"jul": 7, "juli": 7, "july": 7,
+	"aug": 8, "augusti": 8, "august": 8,
+	"sep": 9, "sept": 9, "september": 9,
+	"okt": 10, "oct": 10, "oktober": 10, "october": 10,
+	"nov": 11, "november": 11,
+	"dec": 12, "december": 12,
+}
 
-	for i, m := range months {
-		if m[:3] == name[:3] {
-			return i + 1, true
-		}
-	}
-	return 0, false
+func monthFromName(name string) (int, bool) {
+	month, ok := monthNames[strings.ToLower(strings.TrimSuffix(name, "."))]
+	return month, ok
 }
 
 func containsAny(haystack string, needles []string) bool {
 	for _, n := range needles {
 		if strings.Contains(haystack, n) {
 			return true
+		}
+	}
+	return false
+}
+
+// containsWord is containsAny for short words that also occur inside other
+// words: the match must not touch a letter on either side.
+func containsWord(haystack string, words []string) bool {
+	for _, w := range words {
+		for from := 0; ; {
+			i := strings.Index(haystack[from:], w)
+			if i < 0 {
+				break
+			}
+			start, end := from+i, from+i+len(w)
+			before, _ := utf8.DecodeLastRuneInString(haystack[:start])
+			after, _ := utf8.DecodeRuneInString(haystack[end:])
+			if !unicode.IsLetter(before) && !unicode.IsLetter(after) {
+				return true
+			}
+			from = end
 		}
 	}
 	return false
