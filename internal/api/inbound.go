@@ -98,7 +98,15 @@ func (s *Server) handleOnce(ctx context.Context, messageID string, work func(con
 		return
 	}
 
-	s.deliver(ctx, reply)
+	if !s.deliver(ctx, reply) {
+		// Nothing reached anyone, so finishing would make Meta's retry a no-op
+		// and lose the message. Releasing lets the retry redo it; the work is
+		// idempotent by message id where it stores anything.
+		s.logger.Warn("no reply got through, leaving the message to Meta's retry",
+			"message_id", messageID)
+		s.release(context.WithoutCancel(ctx), messageID)
+		return
+	}
 
 	if err := s.deps.Claims.Finish(context.WithoutCancel(ctx), messageID); err != nil {
 		s.logger.Error("finishing message claim", "message_id", messageID, "error", err)
@@ -113,16 +121,21 @@ func (s *Server) release(ctx context.Context, messageID string) {
 
 // deliver is the only place in the server that sends a WhatsApp message in
 // answer to one. A roster member whose 24-hour window is closed would lose the
-// relay, so theirs is held for later and the sender is told once.
-func (s *Server) deliver(ctx context.Context, r Reply) {
+// relay, so theirs is held for later and the sender is told once; a relay whose
+// send fails is held the same way. It reports whether anything reached anyone
+// or was held, which is what decides if the inbound message counts as handled.
+func (s *Server) deliver(ctx context.Context, r Reply) bool {
 	if r.Silent() || s.deps.Replier == nil {
-		return
+		return true
 	}
 
 	// The reply outlives the request on purpose. Meta has usually given up on
 	// this delivery already, and a cancelled request must not take the answer
 	// with it.
 	ctx = context.WithoutCancel(ctx)
+
+	heldAt := time.Now()
+	reached := false
 
 	var reach, waiting []string
 	if r.Audience != audienceSender {
@@ -132,13 +145,14 @@ func (s *Server) deliver(ctx context.Context, r Reply) {
 				continue
 			}
 			pending, err := s.hold(ctx, store.HeldMessage{
-				To: other, From: r.Sender, Body: r.Body, HeldAt: time.Now(),
+				To: other, From: r.Sender, Body: r.Body, HeldAt: heldAt,
 			})
 			if err != nil {
 				// Trying beats keeping it nowhere; Meta may still take it.
 				reach = append(reach, other)
 				continue
 			}
+			reached = true
 			if pending == 1 {
 				waiting = append(waiting, other)
 			}
@@ -148,14 +162,26 @@ func (s *Server) deliver(ctx context.Context, r Reply) {
 	notice := heldNotice(waiting)
 	switch {
 	case r.Audience != audienceOthers:
-		s.send(ctx, r.Sender, withNotice(r.Body, notice))
+		reached = s.trySend(ctx, r.Sender, withNotice(r.Body, notice)) == nil || reached
 	case notice != "":
 		s.send(ctx, r.Sender, notice)
 	}
 
 	for _, other := range reach {
-		s.send(ctx, other, attribute(r.Sender, r.Body))
+		if s.trySend(ctx, other, attribute(r.Sender, r.Body)) == nil {
+			reached = true
+			continue
+		}
+		// Held rather than dropped: it goes out the next time they write.
+		// No notice, since the window was open and this is a rare outage.
+		if _, err := s.hold(ctx, store.HeldMessage{
+			To: other, From: r.Sender, Body: r.Body, HeldAt: heldAt,
+		}); err == nil {
+			reached = true
+		}
 	}
+
+	return reached
 }
 
 // send posts one message and logs the outcome. It never returns an error

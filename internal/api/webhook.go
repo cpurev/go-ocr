@@ -80,7 +80,7 @@ func (s *Server) handleWebhookReceive(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		s.handleOnce(r.Context(), img.MessageID, func(ctx context.Context) Reply {
-			return s.replyToImage(ctx, img)
+			return withCaption(s.replyToImage(ctx, img), img.Caption)
 		})
 	}
 
@@ -172,6 +172,17 @@ func (s *Server) replyToImage(ctx context.Context, img whatsapp.InboundImage) Re
 			"merchant", created.Merchant, "total", created.Total, "date", created.Date)
 		return replyAll(sender, formatReceiptReply(created))
 	}
+}
+
+// withCaption carries the text sent with a photo. Photos are not forwarded,
+// so without this a caption like "this was for the party" reached nobody.
+func withCaption(r Reply, caption string) Reply {
+	caption = strings.TrimSpace(caption)
+	if caption == "" || r.Silent() {
+		return r
+	}
+	r.Body += "\n\nCaption: " + caption
+	return r
 }
 
 func formatReceiptReply(r model.Receipt) string {

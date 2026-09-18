@@ -35,6 +35,9 @@ type Outbox interface {
 	// Hold queues m and returns how many messages now wait for m.To.
 	Hold(ctx context.Context, m HeldMessage) (int, error)
 
+	// Pending reports how many messages wait for to.
+	Pending(ctx context.Context, to string) (int, error)
+
 	// Take removes and returns up to limit messages for to, oldest first. Each
 	// one is removed atomically, so two instances cannot both deliver it.
 	Take(ctx context.Context, to string, limit int) ([]HeldMessage, error)

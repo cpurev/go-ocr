@@ -2,8 +2,11 @@ package store
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
+
+	"go.mongodb.org/mongo-driver/v2/mongo"
 )
 
 func TestMemoryOutboxSeenKeepsTheNewestTime(t *testing.T) {
@@ -48,5 +51,24 @@ func TestMemoryOutboxTakesOldestFirstUpToLimit(t *testing.T) {
 	}
 	if other, _ := o.Take(ctx, "39", 10); len(other) != 1 {
 		t.Fatalf("Take for another number = %+v, want its own message untouched", other)
+	}
+}
+
+func TestOnlyAMediaClashIsADuplicate(t *testing.T) {
+	clash := func(index string) error {
+		return mongo.WriteException{WriteErrors: []mongo.WriteError{{
+			Code:    11000,
+			Message: "E11000 duplicate key error collection: go_ocr.receipts index: " + index + " dup key: { }",
+		}}}
+	}
+
+	if !isMediaDuplicate(clash("whatsappMediaId_unique")) {
+		t.Errorf("a media id clash is the redelivery case and must read as a duplicate")
+	}
+	if isMediaDuplicate(clash("number_unique")) {
+		t.Errorf("a receipt number clash is a counter fault, not a duplicate photo")
+	}
+	if isMediaDuplicate(errors.New("network")) {
+		t.Errorf("a plain error is not a duplicate")
 	}
 }

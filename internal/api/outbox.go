@@ -21,8 +21,9 @@ const (
 	windowMargin = 10 * time.Minute
 
 	// maxFlush bounds how many held relays one inbound message delivers, since
-	// each is an inline send. The rest go out on that member's next message.
-	maxFlush = 20
+	// each is an inline send. The rest go out on that member's next message,
+	// and windowOpen keeps new relays queued behind them until then.
+	maxFlush = 50
 )
 
 // storeBudget bounds one outbox or claim call.
@@ -33,9 +34,11 @@ func (s *Server) storeBudget() time.Duration {
 	return defaultClaimTimeout
 }
 
-// windowOpen reports whether number wrote to the bot recently enough to be
-// sent free-form text. A number never seen counts as closed. An outbox that
-// cannot answer counts as open, which is how the bot behaved before holding.
+// windowOpen reports whether number can be sent a relay right now: they wrote
+// recently enough for free-form text, and nothing older is still held for
+// them, since a live relay must not overtake the backlog. A number never seen
+// counts as closed. An outbox that cannot answer counts as open, which is how
+// the bot behaved before holding.
 func (s *Server) windowOpen(ctx context.Context, number string) bool {
 	ctx, cancel := context.WithTimeout(ctx, s.storeBudget())
 	defer cancel()
@@ -46,7 +49,16 @@ func (s *Server) windowOpen(ctx context.Context, number string) bool {
 			"to", number, "error", err)
 		return true
 	}
-	return !last.IsZero() && time.Since(last) < serviceWindow-windowMargin
+	if last.IsZero() || time.Since(last) >= serviceWindow-windowMargin {
+		return false
+	}
+
+	backlog, err := s.deps.Outbox.Pending(ctx, number)
+	if err != nil {
+		s.logger.Warn("reading held relays failed, sending anyway", "to", number, "error", err)
+		return true
+	}
+	return backlog == 0
 }
 
 // hold queues a relay and returns how many now wait for its recipient.
@@ -59,7 +71,7 @@ func (s *Server) hold(ctx context.Context, m store.HeldMessage) (int, error) {
 		s.logger.Error("holding relay for a closed window", "to", m.To, "error", err)
 		return 0, err
 	}
-	s.logger.Info("relay held: recipient's 24h window is closed",
+	s.logger.Info("relay held until the recipient next writes",
 		"to", m.To, "from", m.From, "pending", pending, "body_bytes", len(m.Body))
 	return pending, nil
 }

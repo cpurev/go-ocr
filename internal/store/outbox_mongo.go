@@ -91,9 +91,13 @@ func (m *MongoOutbox) Hold(ctx context.Context, msg HeldMessage) (int, error) {
 		return 0, fmt.Errorf("mongo: holding message for %s: %w", msg.To, err)
 	}
 
-	pending, err := m.held.CountDocuments(ctx, bson.D{{Key: "to", Value: msg.To}})
+	return m.Pending(ctx, msg.To)
+}
+
+func (m *MongoOutbox) Pending(ctx context.Context, to string) (int, error) {
+	pending, err := m.held.CountDocuments(ctx, bson.D{{Key: "to", Value: to}})
 	if err != nil {
-		return 0, fmt.Errorf("mongo: counting messages held for %s: %w", msg.To, err)
+		return 0, fmt.Errorf("mongo: counting messages held for %s: %w", to, err)
 	}
 	return int(pending), nil
 }

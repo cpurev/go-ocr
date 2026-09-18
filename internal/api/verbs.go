@@ -27,11 +27,22 @@ type verb struct {
 	// makes the message ordinary chat. A matched verb carrying a wrong value
 	// says so in Command.Err instead.
 	Parse func(args string, now time.Time) (Command, bool)
-	Run   func(*Server, context.Context, request) string
+	Run   func(*Server, context.Context, request) answer
 }
 
-// verbs is the whole command set. Run returns a string rather than a Reply so
-// that an executor cannot contradict the Audience its own row declares.
+// answer is what a verb's Run decided to say. It is not a Reply so that an
+// executor cannot widen the Audience its own row declares; it can only narrow
+// it. A failure changed nothing shared, so "I don't have a receipt #99" is
+// between the bot and whoever typed it, not news for the other phone.
+type answer struct {
+	body    string
+	private bool
+}
+
+func said(body string) answer      { return answer{body: body} }
+func privately(body string) answer { return answer{body: body, private: true} }
+
+// verbs is the whole command set.
 var verbs = []verb{
 	{Name: "help", Aliases: []string{"?", "commands"}, Audience: audienceSender,
 		Usage: "help, what I understand",

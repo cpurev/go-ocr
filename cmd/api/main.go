@@ -48,7 +48,11 @@ func run() error {
 
 	engine := ocr.NewTesseract(cfg.TesseractBin, cfg.TesseractLang, cfg.OCRTimeout)
 
-	if err := engine.Available(); err != nil {
+	if err := engine.Available(); errors.Is(err, ocr.ErrLanguageMissing) {
+		logger.Error("OCR is missing a configured language; receipts will be misread",
+			"lang", cfg.TesseractLang, "error", err,
+			"hint", "install the traineddata (apk add tesseract-ocr-data-swe) or change TESSERACT_LANG")
+	} else if err != nil {
 		logger.Warn("OCR engine is not available; scanning will return 503",
 			"binary", cfg.TesseractBin,
 			"hint", "brew install tesseract (macOS) or apt-get install tesseract-ocr",
@@ -72,7 +76,7 @@ func run() error {
 		}
 
 		defer func() {
-			disconnectCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+			disconnectCtx, cancel := context.WithTimeout(context.Background(), config.MongoDisconnectTimeout)
 			defer cancel()
 			if err := client.Disconnect(disconnectCtx); err != nil {
 				logger.Error("disconnecting from mongodb", "error", err)
@@ -174,7 +178,7 @@ func run() error {
 	httpServer := &http.Server{
 		Addr: cfg.Addr,
 
-		Handler: http.TimeoutHandler(srv.Routes(), cfg.RequestTimeout, timeoutBody),
+		Handler: srv.Handler(cfg.RequestTimeout, timeoutBody),
 
 		ReadTimeout:  cfg.ReadTimeout,
 		WriteTimeout: cfg.WriteTimeout,

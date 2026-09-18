@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"regexp"
 	"slices"
+	"strings"
 	"time"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -111,7 +112,7 @@ func (m *MongoReceipts) EnsureIndexes(ctx context.Context) error {
 	models := []mongo.IndexModel{
 		{
 			Keys:    bson.D{{Key: "whatsappMediaId", Value: 1}},
-			Options: options.Index().SetName("whatsappMediaId_unique").SetUnique(true),
+			Options: options.Index().SetName(mediaIndexName).SetUnique(true),
 		},
 		{
 			Keys:    bson.D{{Key: "userId", Value: 1}, {Key: "date", Value: -1}},
@@ -145,6 +146,29 @@ func (m *MongoReceipts) Ping(ctx context.Context) error {
 	return nil
 }
 
+// mediaIndexName is the one unique index whose clash means "seen this media".
+const mediaIndexName = "whatsappMediaId_unique"
+
+// isMediaDuplicate tells a redelivered photo apart from any other clash. A
+// clash on number_unique means the counter fell behind the receipts, and
+// calling that a duplicate told the user "already logged" and dropped a new
+// receipt on every message until someone noticed.
+func isMediaDuplicate(err error) bool {
+	if !mongo.IsDuplicateKeyError(err) {
+		return false
+	}
+	var we mongo.WriteException
+	if errors.As(err, &we) {
+		for _, e := range we.WriteErrors {
+			if e.Code == 11000 && strings.Contains(e.Message, mediaIndexName) {
+				return true
+			}
+		}
+		return false
+	}
+	return strings.Contains(err.Error(), mediaIndexName)
+}
+
 func (m *MongoReceipts) CreateReceipt(ctx context.Context, in model.ReceiptInput, fields model.ReceiptFields) (model.Receipt, error) {
 	objID := bson.NewObjectID()
 	receipt := in.NewReceipt(objID.Hex(), fields, time.Now().UTC().Truncate(time.Millisecond))
@@ -158,11 +182,11 @@ func (m *MongoReceipts) CreateReceipt(ctx context.Context, in model.ReceiptInput
 	}
 
 	if _, err := m.coll.InsertOne(ctx, newReceiptDocument(receipt, objID)); err != nil {
-		if mongo.IsDuplicateKeyError(err) {
+		if isMediaDuplicate(err) {
 			return model.Receipt{}, fmt.Errorf("%w: media %s already ingested",
 				ErrDuplicate, receipt.WhatsAppMediaID)
 		}
-		return model.Receipt{}, fmt.Errorf("mongo: inserting receipt: %w", err)
+		return model.Receipt{}, fmt.Errorf("mongo: inserting receipt #%d: %w", receipt.Number, err)
 	}
 
 	return receipt, nil

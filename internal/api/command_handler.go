@@ -46,17 +46,17 @@ func (s *Server) replyToText(ctx context.Context, txt whatsapp.InboundText) Repl
 	ctx, cancel := context.WithTimeout(ctx, commandTimeout)
 	defer cancel()
 
-	return Reply{
-		Sender:   sender,
-		Audience: v.Audience,
-		Body:     v.Run(s, ctx, request{Sender: sender, MessageID: txt.MessageID, Cmd: cmd}),
+	ans := v.Run(s, ctx, request{Sender: sender, MessageID: txt.MessageID, Cmd: cmd})
+	if ans.private {
+		return replyToSender(sender, ans.body)
 	}
+	return Reply{Sender: sender, Audience: v.Audience, Body: ans.body}
 }
 
 // addReply logs a receipt with no photo: the message id stands in for the
 // media id, since it is the one thing about a text that is unique the way a
 // WhatsApp media download is, and it keeps a Meta redelivery from double-adding.
-func (s *Server) addReply(ctx context.Context, req request) string {
+func (s *Server) addReply(ctx context.Context, req request) answer {
 	fields := model.ReceiptFields{
 		Merchant: req.Cmd.Merchant,
 		Total:    req.Cmd.Total,
@@ -71,16 +71,16 @@ func (s *Server) addReply(ctx context.Context, req request) string {
 	switch {
 	case errors.Is(err, store.ErrDuplicate):
 		s.logger.Info("webhook text add already ingested", "message_id", req.MessageID)
-		return "I already logged that one."
+		return privately("I already logged that one.")
 	case err != nil:
 		s.logger.Error("adding receipt from text", "message_id", req.MessageID, "error", err)
-		return "Something went wrong saving that. Please try again."
+		return privately("Something went wrong saving that. Please try again.")
 	}
 
 	s.logger.Info("receipt added by text",
 		"receipt_id", created.ID, "merchant", created.Merchant, "total", created.Total)
 
-	return formatReceiptReply(created)
+	return said(formatReceiptReply(created))
 }
 
 // missing names the dependency a verb needs and this deployment does not have.
@@ -94,12 +94,12 @@ func (s *Server) missing(n need) string {
 	return ""
 }
 
-func (s *Server) helpReply(ctx context.Context, req request) string { return helpText }
+func (s *Server) helpReply(ctx context.Context, req request) answer { return said(helpText) }
 
-func (s *Server) whoReply(ctx context.Context, req request) string {
+func (s *Server) whoReply(ctx context.Context, req request) answer {
 	members := s.deps.Relay.Members()
 	if len(members) == 0 {
-		return "The relay isn't set up, so it's just you and me."
+		return said("The relay isn't set up, so it's just you and me.")
 	}
 
 	var b strings.Builder
@@ -112,17 +112,17 @@ func (s *Server) whoReply(ctx context.Context, req request) string {
 		b.WriteString("\n")
 	}
 
-	return b.String()
+	return said(b.String())
 }
 
-func (s *Server) lastReply(ctx context.Context, req request) string {
+func (s *Server) lastReply(ctx context.Context, req request) answer {
 	receipts, err := s.deps.Receipts.ListRecentReceipts(ctx, req.Cmd.Limit)
 	if err != nil {
 		s.logger.Error("listing recent receipts", "limit", req.Cmd.Limit, "error", err)
-		return "Something went wrong reading your receipts. Please try again."
+		return said("Something went wrong reading your receipts. Please try again.")
 	}
 	if len(receipts) == 0 {
-		return "I don't have any receipts yet."
+		return said("I don't have any receipts yet.")
 	}
 
 	var b strings.Builder
@@ -136,7 +136,7 @@ func (s *Server) lastReply(ctx context.Context, req request) string {
 		b.WriteString("\n")
 	}
 
-	return b.String()
+	return said(b.String())
 }
 
 func formatReceiptLine(r model.Receipt) string {
@@ -166,7 +166,7 @@ func writeReceiptFields(b *strings.Builder, r model.Receipt) {
 	}
 }
 
-func (s *Server) editReply(ctx context.Context, req request) string {
+func (s *Server) editReply(ctx context.Context, req request) answer {
 	number := req.Cmd.Number
 	if number == 0 {
 		// Newest overall rather than newest from the asking phone: the relay
@@ -175,21 +175,21 @@ func (s *Server) editReply(ctx context.Context, req request) string {
 		recent, err := s.deps.Receipts.ListRecentReceipts(ctx, 1)
 		if err != nil {
 			s.logger.Error("finding the newest receipt to edit", "error", err)
-			return "Something went wrong finding that receipt. Please try again."
+			return privately("Something went wrong finding that receipt. Please try again.")
 		}
 		if len(recent) == 0 {
-			return "I don't have any receipts yet."
+			return privately("I don't have any receipts yet.")
 		}
 		number = recent[0].Number
 	}
 
 	existing, err := s.deps.Receipts.GetReceiptByNumber(ctx, number)
 	if errors.Is(err, store.ErrNotFound) {
-		return fmt.Sprintf("I don't have a receipt #%d.", number)
+		return privately(fmt.Sprintf("I don't have a receipt #%d.", number))
 	}
 	if err != nil {
 		s.logger.Error("looking up receipt for edit", "number", number, "error", err)
-		return "Something went wrong finding that receipt. Please try again."
+		return privately("Something went wrong finding that receipt. Please try again.")
 	}
 
 	if problems := req.Cmd.Update.Validate(); len(problems) > 0 {
@@ -198,16 +198,16 @@ func (s *Server) editReply(ctx context.Context, req request) string {
 		for field, problem := range problems {
 			fmt.Fprintf(&b, "• %s %s\n", field, problem)
 		}
-		return b.String()
+		return privately(b.String())
 	}
 
 	updated, err := s.deps.Receipts.UpdateReceipt(ctx, existing.ID, req.Cmd.Update)
 	if errors.Is(err, store.ErrNotFound) {
-		return fmt.Sprintf("I don't have a receipt #%d.", number)
+		return privately(fmt.Sprintf("I don't have a receipt #%d.", number))
 	}
 	if err != nil {
 		s.logger.Error("updating receipt", "number", number, "error", err)
-		return "Something went wrong saving that edit. Please try again."
+		return privately("Something went wrong saving that edit. Please try again.")
 	}
 
 	s.logger.Info("receipt edited",
@@ -216,10 +216,10 @@ func (s *Server) editReply(ctx context.Context, req request) string {
 
 	learned := s.teachStore(ctx, existing, req.Cmd.Update)
 
-	return formatEditReply(updated, learned)
+	return said(formatEditReply(updated, learned))
 }
 
-func (s *Server) totalReply(ctx context.Context, req request) string {
+func (s *Server) totalReply(ctx context.Context, req request) answer {
 	q := store.TotalQuery{From: req.Cmd.Period.From, To: req.Cmd.Period.To, Latest: defaultRecent}
 	if req.Cmd.Scope == scopeSender {
 		q.UserID = req.Sender
@@ -227,14 +227,14 @@ func (s *Server) totalReply(ctx context.Context, req request) string {
 
 	total, err := s.deps.Receipts.SumReceipts(ctx, q)
 	if errors.Is(err, store.ErrTooManyReceipts) {
-		return "That's more receipts than I can add up at once. Try a single month."
+		return said("That's more receipts than I can add up at once. Try a single month.")
 	}
 	if err != nil {
 		s.logger.Error("totalling receipts", "period", req.Cmd.Period.Label, "error", err)
-		return "Something went wrong adding up your receipts. Please try again."
+		return said("Something went wrong adding up your receipts. Please try again.")
 	}
 	if total.Count == 0 {
-		return fmt.Sprintf("I have no receipts for %s.", req.Cmd.Period.Label)
+		return said(fmt.Sprintf("I have no receipts for %s.", req.Cmd.Period.Label))
 	}
 
 	var b strings.Builder
@@ -259,29 +259,29 @@ func (s *Server) totalReply(ctx context.Context, req request) string {
 		b.WriteString("\n")
 	}
 
-	return b.String()
+	return said(b.String())
 }
 
-func (s *Server) deleteReply(ctx context.Context, req request) string {
+func (s *Server) deleteReply(ctx context.Context, req request) answer {
 	number := req.Cmd.Number
 
 	existing, err := s.deps.Receipts.GetReceiptByNumber(ctx, number)
 	if errors.Is(err, store.ErrNotFound) {
-		return fmt.Sprintf("I don't have a receipt #%d.", number)
+		return privately(fmt.Sprintf("I don't have a receipt #%d.", number))
 	}
 	if err != nil {
 		s.logger.Error("looking up receipt to delete", "number", number, "error", err)
-		return "Something went wrong finding that receipt. Please try again."
+		return privately("Something went wrong finding that receipt. Please try again.")
 	}
 
 	err = s.deps.Receipts.DeleteReceipt(ctx, existing.ID)
 	if errors.Is(err, store.ErrNotFound) {
-		return fmt.Sprintf("I don't have a receipt #%d.", number)
+		return privately(fmt.Sprintf("I don't have a receipt #%d.", number))
 	}
 	if err != nil {
 		s.logger.Error("deleting receipt",
 			"number", number, "receipt_id", existing.ID, "error", err)
-		return "Something went wrong deleting that receipt. Please try again."
+		return privately("Something went wrong deleting that receipt. Please try again.")
 	}
 
 	s.logger.Info("receipt deleted",
@@ -292,7 +292,7 @@ func (s *Server) deleteReply(ctx context.Context, req request) string {
 	fmt.Fprintf(&b, "*Receipt #%d deleted*\n\n", existing.Number)
 	writeReceiptFields(&b, existing)
 
-	return b.String()
+	return said(b.String())
 }
 
 func (s *Server) teachStore(ctx context.Context, existing model.Receipt, update model.ReceiptUpdate) string {
@@ -322,15 +322,15 @@ func (s *Server) teachStore(ctx context.Context, existing model.Receipt, update 
 	return merchant
 }
 
-func (s *Server) storesReply(ctx context.Context, req request) string {
+func (s *Server) storesReply(ctx context.Context, req request) answer {
 	stores, err := s.deps.Stores.ListStores(ctx)
 	if err != nil {
 		s.logger.Error("listing stores", "error", err)
-		return "Something went wrong reading the store list."
+		return said("Something went wrong reading the store list.")
 	}
 	if len(stores) == 0 {
-		return "I haven't learned any shops yet.\n\n" +
-			"Correct one with `edit 7 merchant: ICA` and I'll remember it."
+		return said("I haven't learned any shops yet.\n\n" +
+			"Correct one with `edit 7 merchant: ICA` and I'll remember it.")
 	}
 
 	var b strings.Builder
@@ -338,7 +338,7 @@ func (s *Server) storesReply(ctx context.Context, req request) string {
 	for _, st := range stores {
 		fmt.Fprintf(&b, "%s (%s)\n", st.Merchant, st.OrgNr)
 	}
-	return b.String()
+	return said(b.String())
 }
 
 func formatEditReply(r model.Receipt, learned string) string {

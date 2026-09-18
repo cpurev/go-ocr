@@ -61,7 +61,9 @@ func (c *Client) Metadata(ctx context.Context, mediaID string) (Media, error) {
 		return Media{}, fmt.Errorf("%w: empty media id", ErrMediaNotFound)
 	}
 
-	body, _, err := c.get(ctx, c.baseURL+"/"+mediaID)
+	// Escaped because the REST API accepts a caller-supplied id, and "a/../b"
+	// or "x?fields=" must not steer a token-bearing Graph call elsewhere.
+	body, _, err := c.get(ctx, c.baseURL+"/"+url.PathEscape(mediaID))
 	if err != nil {
 		return Media{}, err
 	}
@@ -88,6 +90,13 @@ func (c *Client) Download(ctx context.Context, mediaID string) ([]byte, error) {
 	}
 	if media.FileSize > c.maxBytes {
 		return nil, fmt.Errorf("whatsapp: media is %d bytes, limit is %d", media.FileSize, c.maxBytes)
+	}
+
+	// The URL comes from a response, and the download carries the bearer
+	// token, so it only goes to Meta's own hosts.
+	if !c.trustedMediaURL(media.URL) {
+		return nil, fmt.Errorf("whatsapp: refusing to send the token to media url host %q",
+			hostOf(media.URL))
 	}
 
 	image, contentType, err := c.get(ctx, media.URL)
@@ -142,6 +151,38 @@ func (c *Client) get(ctx context.Context, url string) ([]byte, string, error) {
 	}
 
 	return body, resp.Header.Get("Content-Type"), nil
+}
+
+// metaHostSuffixes are where Meta serves WhatsApp media from.
+var metaHostSuffixes = []string{".fbsbx.com", ".facebook.com", ".fbcdn.net", ".whatsapp.net"}
+
+func (c *Client) trustedMediaURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	// The configured API base is trusted by definition; it is how tests and a
+	// pinned proxy point the client somewhere else.
+	if base, err := url.Parse(c.baseURL); err == nil && u.Scheme == base.Scheme && u.Host == base.Host {
+		return true
+	}
+	if u.Scheme != "https" {
+		return false
+	}
+	host := "." + strings.ToLower(u.Hostname())
+	for _, suffix := range metaHostSuffixes {
+		if strings.HasSuffix(host, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+func hostOf(raw string) string {
+	if u, err := url.Parse(raw); err == nil {
+		return u.Host
+	}
+	return ""
 }
 
 func redactURLError(err error) error {

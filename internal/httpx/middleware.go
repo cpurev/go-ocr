@@ -27,6 +27,13 @@ const maxInboundRequestID = 64
 
 func RequestID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// An id already on the context came from an outer RequestID, so the
+		// logger and the handlers agree on it.
+		if RequestIDFrom(r.Context()) != "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		id := r.Header.Get(requestIDHeader)
 		if id == "" || len(id) > maxInboundRequestID {
 			id = rand.Text()

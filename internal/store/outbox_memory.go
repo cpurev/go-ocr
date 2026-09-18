@@ -43,14 +43,24 @@ func (m *MemoryOutbox) Hold(_ context.Context, msg HeldMessage) (int, error) {
 	defer m.mu.Unlock()
 
 	m.held = append(m.held, msg)
+	return m.pending(msg.To), nil
+}
 
-	pending := 0
+func (m *MemoryOutbox) Pending(_ context.Context, to string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return m.pending(to), nil
+}
+
+func (m *MemoryOutbox) pending(to string) int {
+	n := 0
 	for _, h := range m.held {
-		if h.To == msg.To {
-			pending++
+		if h.To == to {
+			n++
 		}
 	}
-	return pending, nil
+	return n
 }
 
 func (m *MemoryOutbox) Take(_ context.Context, to string, limit int) ([]HeldMessage, error) {

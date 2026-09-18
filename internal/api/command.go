@@ -192,8 +192,32 @@ func parseAdd(args string, now time.Time) (Command, bool) {
 	if merchant == "" {
 		return Command{Err: errors.New("name the shop, e.g. add 150 ICA")}, true
 	}
+	if looksLikeShopping(merchant) {
+		return Command{}, false
+	}
 
 	return Command{Total: amount, Merchant: merchant, Date: now.Format(model.DateLayout)}, true
+}
+
+// unitWords open a quantity rather than a shop: "add 2 liters of milk".
+var unitWords = map[string]bool{
+	"l": true, "liter": true, "liters": true, "litre": true, "litres": true,
+	"kg": true, "kilo": true, "g": true, "gram": true, "st": true, "pcs": true,
+	"pieces": true, "pack": true, "packs": true, "bottle": true, "bottles": true,
+	"can": true, "cans": true, "cups": true, "dozen": true, "more": true, "x": true,
+}
+
+// looksLikeShopping reports an add that is a shopping-list note, not a receipt.
+// "add 150 ICA" has to stay a receipt with no currency word, so the test is
+// on what follows the number: a unit, or the list it is being added to.
+func looksLikeShopping(merchant string) bool {
+	words := strings.Fields(strings.ToLower(merchant))
+	if len(words) > 0 && unitWords[strings.Trim(words[0], ".,")] {
+		return true
+	}
+	lower := " " + strings.Join(words, " ") + " "
+	return strings.Contains(lower, " to the list ") || strings.Contains(lower, " to list ") ||
+		strings.Contains(lower, " to the shopping ")
 }
 
 func parseTotal(args string, now time.Time) (Command, bool) {
@@ -237,7 +261,7 @@ func stripToken(args, token string) (string, bool) {
 func parseFields(tail string) (model.ReceiptUpdate, error) {
 	var update model.ReceiptUpdate
 
-	locs := fieldRe.FindAllStringSubmatchIndex(tail, -1)
+	locs := fieldStarts(tail)
 	if len(locs) == 0 {
 		return update, nil
 	}
@@ -261,6 +285,37 @@ func parseFields(tail string) (model.ReceiptUpdate, error) {
 	}
 
 	return update, nil
+}
+
+// fieldStarts keeps the field words that begin a field, dropping the ones that
+// are part of a value: "Pizza Total", "Apple Store Täby", "The Body Shop". A
+// word begins a field when it carries a separator, opens the text or follows a
+// comma, or is a number field immediately followed by a digit ("ICA total 150").
+func fieldStarts(tail string) [][]int {
+	var starts [][]int
+	for _, loc := range fieldRe.FindAllStringSubmatchIndex(tail, -1) {
+		name := strings.ToLower(tail[loc[2]:loc[3]])
+		keyword := tail[loc[0]:loc[1]]
+		before := strings.TrimRight(tail[:loc[0]], " \t")
+		rest := tail[loc[1]:]
+
+		switch {
+		case strings.ContainsAny(keyword, ":="),
+			before == "",
+			strings.HasSuffix(before, ",") || strings.HasSuffix(before, ";"),
+			numericField(name) && rest != "" && rest[0] >= '0' && rest[0] <= '9':
+			starts = append(starts, loc)
+		}
+	}
+	return starts
+}
+
+func numericField(name string) bool {
+	switch name {
+	case "total", "sum", "subtotal", "tax", "vat", "moms", "date":
+		return true
+	}
+	return false
 }
 
 func assignField(update *model.ReceiptUpdate, name, value string) error {

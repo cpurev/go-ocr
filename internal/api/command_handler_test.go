@@ -64,7 +64,7 @@ func TestWhoReply(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			srv := newCommandServer(t, tt.roster, nil)
 
-			got := srv.whoReply(context.Background(), request{Sender: tt.sender})
+			got := srv.whoReply(context.Background(), request{Sender: tt.sender}).body
 			if got != tt.want {
 				t.Errorf("who from %s replied %q, want %q", tt.sender, got, tt.want)
 			}
@@ -128,7 +128,7 @@ func TestLastReply(t *testing.T) {
 			srv := newCommandServer(t, nil, receipts)
 
 			got := srv.lastReply(context.Background(),
-				request{Sender: alice, Cmd: Command{Limit: defaultRecent}})
+				request{Sender: alice, Cmd: Command{Limit: defaultRecent}}).body
 			if got != tt.want {
 				t.Errorf("last replied %q, want %q", got, tt.want)
 			}
@@ -161,7 +161,7 @@ func TestEditWithNoNumberTargetsTheNewestByInsertionOrder(t *testing.T) {
 	srv := newCommandServer(t, nil, receipts)
 
 	body := srv.editReply(context.Background(), request{Sender: alice,
-		Cmd: Command{Update: model.ReceiptUpdate{Merchant: ptr("Coop")}}})
+		Cmd: Command{Update: model.ReceiptUpdate{Merchant: ptr("Coop")}}}).body
 
 	if askedLimit != 1 {
 		t.Errorf("edit asked the store for %d recent receipts, want 1", askedLimit)
@@ -207,7 +207,7 @@ func TestEditWithNoNumberWhenThereIsNothingToTarget(t *testing.T) {
 			srv := newCommandServer(t, nil, receipts)
 
 			got := srv.editReply(context.Background(), request{Sender: alice,
-				Cmd: Command{Update: model.ReceiptUpdate{Merchant: ptr("Coop")}}})
+				Cmd: Command{Update: model.ReceiptUpdate{Merchant: ptr("Coop")}}}).body
 			if got != tt.want {
 				t.Errorf("edit replied %q, want %q", got, tt.want)
 			}
@@ -234,7 +234,7 @@ func TestDeleteReply(t *testing.T) {
 	}
 	srv := newCommandServer(t, nil, receipts)
 
-	got := srv.deleteReply(context.Background(), request{Sender: alice, Cmd: Command{Number: 7}})
+	got := srv.deleteReply(context.Background(), request{Sender: alice, Cmd: Command{Number: 7}}).body
 
 	want := "*Receipt #7 deleted*\n\n" +
 		"Merchant: ICA\nDate: 2026-08-04\nTotal: 154.53 SEK\nTax: 30.91 SEK\n"
@@ -258,7 +258,7 @@ func TestDeleteReplyWhenThereIsNoSuchReceipt(t *testing.T) {
 	}
 	srv := newCommandServer(t, nil, receipts)
 
-	got := srv.deleteReply(context.Background(), request{Sender: alice, Cmd: Command{Number: 7}})
+	got := srv.deleteReply(context.Background(), request{Sender: alice, Cmd: Command{Number: 7}}).body
 	if want := "I don't have a receipt #7."; got != want {
 		t.Errorf("delete replied %q, want %q", got, want)
 	}
@@ -341,7 +341,7 @@ func TestTotalReply(t *testing.T) {
 			srv := newCommandServer(t, nil, receipts)
 
 			got := srv.totalReply(context.Background(),
-				request{Sender: alice, Cmd: Command{Period: september, Scope: tt.scope}})
+				request{Sender: alice, Cmd: Command{Period: september, Scope: tt.scope}}).body
 			if got != tt.want {
 				t.Errorf("total replied %q, want %q", got, tt.want)
 			}
@@ -407,7 +407,7 @@ func TestAddReply(t *testing.T) {
 			srv := newCommandServer(t, nil, receipts)
 
 			got := srv.addReply(context.Background(),
-				request{Sender: alice, MessageID: "wamid.ADD1", Cmd: cmd})
+				request{Sender: alice, MessageID: "wamid.ADD1", Cmd: cmd}).body
 			if got != tt.want {
 				t.Errorf("add replied %q, want %q", got, tt.want)
 			}

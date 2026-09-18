@@ -39,15 +39,23 @@ POST /api/v1/scan    │ internal/ocr  internal/  │    (nothing stored)
 
 ```bash
 brew install tesseract         # or: apt-get install tesseract-ocr
+export API_TOKEN=$(openssl rand -hex 24)
 make run                       # start on :8080, no database needed for scanning
 curl localhost:8080/healthz    # liveness
 
 # scan any receipt image, get data back, store nothing
-curl -s -X POST localhost:8080/api/v1/scan -F image=@receipt.jpg
+curl -s -X POST localhost:8080/api/v1/scan -H "Authorization: Bearer $API_TOKEN" \
+  -F image=@receipt.jpg
 # ...or as a raw body:
-curl -s -X POST localhost:8080/api/v1/scan \
+curl -s -X POST localhost:8080/api/v1/scan -H "Authorization: Bearer $API_TOKEN" \
   -H 'Content-Type: image/jpeg' --data-binary @receipt.jpg
 ```
+
+`/api/v1/scan` and `/api/v1/receipts*` need `Authorization: Bearer $API_TOKEN`.
+The service has to be public for Meta to reach the webhook, and without the
+token anyone holding the URL could read every receipt, phone numbers included.
+With `API_TOKEN` unset those routes answer 401 to everyone. The webhook and the
+health checks stay open; the webhook authenticates itself by signature.
 
 With `ATLAS` set, receipts persist and become searchable. With `WHATSAPP_TOKEN`
 set, they can be ingested straight from a media id:
@@ -57,17 +65,18 @@ cp .env.example .env           # put your Atlas connection string in ATLAS
 curl localhost:8080/readyz     # readiness, pings MongoDB when configured
 
 # ingest a WhatsApp receipt photo (needs WHATSAPP_TOKEN + ATLAS)
-curl -i -X POST localhost:8080/api/v1/receipts \
+curl -i -X POST localhost:8080/api/v1/receipts -H "Authorization: Bearer $API_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"whatsapp_media_id":"media_abc123xyz","user_id":"whatsapp_user_123456","group_id":"whatsapp_group_789"}'
 
 # search them
-curl -s 'localhost:8080/api/v1/receipts?merchant=starbucks'
-curl -s 'localhost:8080/api/v1/receipts?date_from=2025-08-01&date_to=2025-08-31'
-curl -s 'localhost:8080/api/v1/receipts?user_id=whatsapp_user_123456&min_total=10'
+auth=(-H "Authorization: Bearer $API_TOKEN")
+curl -s "${auth[@]}" 'localhost:8080/api/v1/receipts?merchant=starbucks'
+curl -s "${auth[@]}" 'localhost:8080/api/v1/receipts?date_from=2025-08-01&date_to=2025-08-31'
+curl -s "${auth[@]}" 'localhost:8080/api/v1/receipts?user_id=whatsapp_user_123456&min_total=10'
 
 # fetch one (use an id from the responses above)
-curl -s localhost:8080/api/v1/receipts/<id>
+curl -s "${auth[@]}" localhost:8080/api/v1/receipts/<id>
 ```
 
 `make help` lists every task. `make check` runs format, vet, and build.
@@ -305,19 +314,23 @@ number rather than forwarding silently.
 
 | Command | Answers with | Who sees the answer |
 | ------- | ------------ | ------------------- |
-| `help`, `?`, `commands` | what the bot understands | everyone |
+| `help`, `?`, `commands` | what the bot understands | the asker |
 | `who`, `relay` | the numbers on the relay | the asker |
-| `stores`, `shops`, `merchants` | the shops it has learned | everyone |
+| `stores`, `shops`, `merchants` | the shops it has learned | the asker |
 | `last`, `last 5`, `recent` | the newest receipts, by when they arrived | the asker |
 | `total`, `sum`, `spent`, `total last month`, `total 2026-08`, `total all`, `total ever` | one SEK sum and the five newest receipts in it | the asker |
+| `add 150 ICA`, `add 228 kr Willys` | the new receipt, for one with no photo | everyone |
 | `edit 7 merchant: ICA` | the receipt after the change | everyone |
 | `delete 7`, `remove 7`, `rm 7` | the full contents of what vanished | everyone |
 
 Queries answer only the phone that asked, so one person checking their own total
-does not buzz the other's. Anything that changed shared state answers both, and
-so does `help`, because two people sharing a relay should see the same rules. A
-parse error and a missing dependency always go to the sender alone. A grammar
-nag is between the bot and whoever typed it.
+does not buzz the other's. Anything that changed shared state answers both. A
+parse error, a missing dependency, and a command that changed nothing (`delete 99`
+when there is no #99, an edit that fails validation) go to the sender alone: it
+is between the bot and whoever typed it.
+
+A photo's caption goes out with the receipt reply to both phones, since photos
+themselves are not forwarded.
 
 `total` covers the month containing today unless the message names another, and
 draws month boundaries in the zone `APP_TIMEZONE` sets. It answers with one
@@ -434,11 +447,12 @@ Everything is optional. Each integration boots only when its variable is set:
 | `MONGO_CLAIMS_COLLECTION`   | `claims`       | message-id claims; what makes a Meta redelivery a no-op |
 | `MONGO_SEEN_COLLECTION`     | `seen`         | when each participant last wrote; decides whether their 24h window is open |
 | `MONGO_OUTBOX_COLLECTION`   | `outbox`       | relays held for a closed window, delivered when that participant next writes |
+| `API_TOKEN`                 | *(unset)*      | bearer token for `/api/v1/scan` and `/api/v1/receipts*`; unset closes them |
 | `STORE_OVERRIDES_OCR`       | `false`        | `true` lets a learned merchant beat the OCR-read one; `false` fills only a blank |
 | `WHATSAPP_TIMEOUT`          | `20s`          | budget for the two media calls             |
 | `MEDIA_MAX_BYTES`           | `10MB`         | max image size (accepts `10MB`, `512KB`)   |
 | `TESSERACT_BIN`             | `tesseract`    | binary name or absolute path               |
-| `TESSERACT_LANG`            | `eng`          | traineddata language, e.g. `eng+mon`       |
+| `TESSERACT_LANG`            | `swe+eng`      | traineddata languages; each must be installed or startup warns |
 | `OCR_TIMEOUT`               | `30s`          | budget for one tesseract run               |
 | `RECEIPT_DAY_FIRST`         | `true`         | `04/08/2025` → 4 Aug (`false` → 8 Apr)     |
 | `DOTENV_PATH`               | `.env`         | where to look for the env file             |
@@ -449,7 +463,7 @@ Everything is optional. Each integration boots only when its variable is set:
 | `WRITE_TIMEOUT`             | `75s`          | max time to write a response               |
 | `IDLE_TIMEOUT`              | `60s`          | keep-alive idle limit                      |
 | `REQUEST_TIMEOUT`           | `60s`          | max handler runtime (must be < write)      |
-| `SHUTDOWN_TIMEOUT`          | `15s`          | drain window on SIGTERM                    |
+| `SHUTDOWN_TIMEOUT`          | `7s`           | drain window on SIGTERM; Cloud Run kills at 10s |
 | `LOG_LEVEL`                 | `info`         | `debug` / `info` / `warn` / `error`        |
 
 `REQUEST_TIMEOUT` is 60s rather than the 10s you would pick for a plain JSON API,

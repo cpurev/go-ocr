@@ -197,3 +197,16 @@ func newOutboxSeenAt(t *testing.T, seen map[string]time.Time) *store.MemoryOutbo
 	}
 	return o
 }
+
+func TestAPhotoCaptionReachesTheOtherPhone(t *testing.T) {
+	got := withCaption(replyAll(alice, "*Receipt #3 saved*"), " for the party ")
+	if want := "*Receipt #3 saved*\n\nCaption: for the party"; got.Body != want {
+		t.Fatalf("body = %q, want %q", got.Body, want)
+	}
+	if got.Audience != audienceEveryone {
+		t.Fatalf("audience = %v, want everyone so the caption reaches the other phone", got.Audience)
+	}
+	if withCaption(replyAll(alice, "x"), "  ").Body != "x" {
+		t.Fatalf("a blank caption changed the reply")
+	}
+}

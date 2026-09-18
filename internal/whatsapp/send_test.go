@@ -36,3 +36,19 @@ func TestSendTextMapsReEngagementToOutsideWindow(t *testing.T) {
 		t.Fatalf("SendText error = %v, want ErrOutsideWindow", err)
 	}
 }
+
+func TestMediaURLMustBeMetasBeforeTheTokenIsSent(t *testing.T) {
+	c := NewClient("https://graph.facebook.com/v21.0", "token", time.Second, 0)
+	for raw, want := range map[string]bool{
+		"https://lookaside.fbsbx.com/whatsapp_business/attachments/?mid=1": true,
+		"https://graph.facebook.com/v21.0/x":                               true,
+		"https://evil.example.com/steal":                                   false,
+		"https://fbsbx.com.evil.example/x":                                 false,
+		"http://lookaside.fbsbx.com/x":                                     false,
+		"not a url":                                                        false,
+	} {
+		if got := c.trustedMediaURL(raw); got != want {
+			t.Errorf("trustedMediaURL(%q) = %v, want %v", raw, got, want)
+		}
+	}
+}

@@ -54,6 +54,9 @@ type Config struct {
 	MongoSeen   string
 	MongoOutbox string
 
+	// APIToken guards the REST routes; empty closes them.
+	APIToken string
+
 	StoreOverridesOCR bool
 }
 
@@ -75,6 +78,8 @@ func Load() (Config, error) {
 		MongoSeen:     getString("MONGO_SEEN_COLLECTION", "seen"),
 		MongoOutbox:   getString("MONGO_OUTBOX_COLLECTION", "outbox"),
 
+		APIToken: getString("API_TOKEN", ""),
+
 		WhatsAppToken:       getString("WHATSAPP_TOKEN", ""),
 		WhatsAppAPIBase:     getString("WHATSAPP_API_BASE", "https://graph.facebook.com/v21.0"),
 		WhatsAppVerifyToken: getString("WHATSAPP_VERIFY_TOKEN", ""),
@@ -84,14 +89,20 @@ func Load() (Config, error) {
 
 		RelayNumbers: getStringSlice("WHATSAPP_RELAY_NUMBERS"),
 
-		TesseractBin:  getString("TESSERACT_BIN", "tesseract"),
-		TesseractLang: getString("TESSERACT_LANG", "eng"),
-
-		ReceiptDayFirst:   getBool("RECEIPT_DAY_FIRST", true),
-		StoreOverridesOCR: getBool("STORE_OVERRIDES_OCR", false),
+		TesseractBin: getString("TESSERACT_BIN", "tesseract"),
+		// swe as well as eng: the receipts are Swedish, and English alone reads
+		// å, ä and ö as other letters and misses words like "Totalt" and "Moms".
+		TesseractLang: getString("TESSERACT_LANG", "swe+eng"),
 	}
 
 	var err error
+
+	if cfg.ReceiptDayFirst, err = getBool("RECEIPT_DAY_FIRST", true); err != nil {
+		return Config{}, err
+	}
+	if cfg.StoreOverridesOCR, err = getBool("STORE_OVERRIDES_OCR", false); err != nil {
+		return Config{}, err
+	}
 
 	if cfg.ReadTimeout, err = getDuration("READ_TIMEOUT", 5*time.Second); err != nil {
 		return Config{}, err
@@ -106,7 +117,10 @@ func Load() (Config, error) {
 	if cfg.RequestTimeout, err = getDuration("REQUEST_TIMEOUT", 60*time.Second); err != nil {
 		return Config{}, err
 	}
-	if cfg.ShutdownTimeout, err = getDuration("SHUTDOWN_TIMEOUT", 15*time.Second); err != nil {
+	// Cloud Run sends SIGKILL 10 seconds after SIGTERM. Draining plus the Mongo
+	// disconnect (MongoDisconnectTimeout) has to fit inside that, or the
+	// disconnect never runs and an in-flight claim waits out its lease.
+	if cfg.ShutdownTimeout, err = getDuration("SHUTDOWN_TIMEOUT", 7*time.Second); err != nil {
 		return Config{}, err
 	}
 	if cfg.MongoTimeout, err = getDuration("MONGO_TIMEOUT", 10*time.Second); err != nil {
@@ -152,6 +166,9 @@ func Load() (Config, error) {
 
 	return cfg, nil
 }
+
+// MongoDisconnectTimeout is what is left for closing Mongo after draining.
+const MongoDisconnectTimeout = 2 * time.Second
 
 // Location falls back to UTC so a zero Config cannot panic inside time.In.
 func (c Config) Location() *time.Location {
@@ -216,6 +233,9 @@ func getLocation(key, fallback string) (*time.Location, error) {
 	return loc, nil
 }
 
+// getDuration rejects zero and negative values. Every duration here is a
+// timeout, and a client that sees <= 0 quietly swaps in its own default,
+// which also slipped past the WHATSAPP_TIMEOUT + OCR_TIMEOUT budget check.
 func getDuration(key string, fallback time.Duration) (time.Duration, error) {
 	raw, ok := os.LookupEnv(key)
 	if !ok || raw == "" {
@@ -225,24 +245,29 @@ func getDuration(key string, fallback time.Duration) (time.Duration, error) {
 	if err != nil {
 		return 0, fmt.Errorf("config: invalid %s=%q: %w", key, raw, err)
 	}
+	if d <= 0 {
+		return 0, fmt.Errorf("config: %s=%q must be positive", key, raw)
+	}
 	return d, nil
 }
 
-func getBool(key string, fallback bool) bool {
+// getBool fails on a value it cannot read. Falling back to the default made
+// RECEIPT_DAY_FIRST=fasle silently mean true.
+func getBool(key string, fallback bool) (bool, error) {
 	raw := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
 	switch raw {
 	case "":
-		return fallback
+		return fallback, nil
 	case "yes", "y", "on":
-		return true
+		return true, nil
 	case "no", "n", "off":
-		return false
+		return false, nil
 	}
 	v, err := strconv.ParseBool(raw)
 	if err != nil {
-		return fallback
+		return false, fmt.Errorf("config: invalid %s=%q: want true or false", key, raw)
 	}
-	return v
+	return v, nil
 }
 
 func getBytes(key string, fallback int64) (int64, error) {
