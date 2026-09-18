@@ -33,8 +33,13 @@ var (
 	editNumberRe = regexp.MustCompile(`^\s*#?\s*(\d+)\s*`)
 
 	// leadingAmountRe requires the amount to open the message, so "add" without
-	// one relays as chat instead of misreading whatever comes after it.
-	leadingAmountRe = regexp.MustCompile(`^(\d+(?:[.,]\d+)?)\s*`)
+	// one relays as chat instead of misreading whatever comes after it. A
+	// currency word on either side of the amount is consumed with it: every
+	// receipt is SEK, and left in place it became the front of the merchant.
+	// The word must end at whitespace, not \b, which is ASCII-only in RE2 and
+	// would read "Krögers" as "kr" plus "ögers".
+	leadingAmountRe = regexp.MustCompile(
+		`(?i)^(?:(?:sek|kr)\.?\s*)?(\d+(?:[.,]\d+)?)\s*(?:(?:sek|kronor|kr)\.?(?:\s+|$)|:-)?\s*`)
 
 	fieldRe = regexp.MustCompile(
 		`(?i)\b(merchant|shop|store|total|sum|subtotal|tax|vat|moms|date)\b\s*[:=]?\s*`)
