@@ -367,6 +367,7 @@ func (m *MongoReceipts) SumReceipts(ctx context.Context, q TotalQuery) (ReceiptT
 			{Key: "merchant", Value: 1},
 			{Key: "total", Value: 1},
 			{Key: "date", Value: 1},
+			{Key: "userId", Value: 1},
 		}))
 	if err != nil {
 		return ReceiptTotal{}, fmt.Errorf("mongo: totalling receipts: %w", err)
@@ -391,14 +392,30 @@ func sumReceipts(docs []receiptDocument, latest int) (ReceiptTotal, error) {
 	}
 
 	var total ReceiptTotal
+	byUser := make(map[string]*UserTotal)
 	for _, doc := range docs {
+		user := byUser[doc.UserID]
+		if user == nil {
+			user = &UserTotal{UserID: doc.UserID}
+			byUser[doc.UserID] = user
+		}
+
 		total.Total += doc.Total
+		user.Total += doc.Total
 		total.Count++
+		user.Count++
 		if doc.Date == "" {
 			total.Undated++
+			user.Undated++
 		}
 	}
 	total.Total = model.RoundMoney(total.Total)
+
+	for _, user := range byUser {
+		user.Total = model.RoundMoney(user.Total)
+		total.ByUser = append(total.ByUser, *user)
+	}
+	slices.SortFunc(total.ByUser, func(a, b UserTotal) int { return strings.Compare(a.UserID, b.UserID) })
 
 	newest := slices.Clone(docs)
 	slices.SortFunc(newest, func(a, b receiptDocument) int {

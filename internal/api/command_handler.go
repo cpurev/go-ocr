@@ -237,22 +237,14 @@ func (s *Server) totalReply(ctx context.Context, req request) answer {
 		return said(fmt.Sprintf("I have no receipts for %s.", req.Cmd.Period.Label))
 	}
 
-	var b strings.Builder
-	fmt.Fprintf(&b, "*Total for %s", req.Cmd.Period.Label)
 	if req.Cmd.Scope == scopeEveryone {
-		b.WriteString(", everyone")
+		return said(s.formatEveryoneTotal(req, total))
 	}
-	b.WriteString("*\n\n")
 
-	noun := "receipts"
-	if total.Count == 1 {
-		noun = "receipt"
-	}
-	fmt.Fprintf(&b, "Total: %.2f %s (%d %s", total.Total, model.Currency, total.Count, noun)
-	if total.Undated > 0 {
-		fmt.Fprintf(&b, ", %d dated by when I got them", total.Undated)
-	}
-	b.WriteString(")\n\nLatest:\n")
+	var b strings.Builder
+	fmt.Fprintf(&b, "*Total for %s*\n\n", req.Cmd.Period.Label)
+	fmt.Fprintf(&b, "Total: %s\n\nLatest:\n",
+		formatShare(total.Total, total.Count, total.Undated))
 
 	for _, r := range total.Latest {
 		b.WriteString(formatReceiptLine(r))
@@ -260,6 +252,88 @@ func (s *Server) totalReply(ctx context.Context, req request) answer {
 	}
 
 	return said(b.String())
+}
+
+// formatEveryoneTotal answers "total all" with one line per phone rather than
+// one combined figure, since two people sharing a relay want to know who spent
+// what. The latest lines say whose each receipt is, masked to the first digits
+// because the roster is short enough for that to identify it.
+func (s *Server) formatEveryoneTotal(req request, total store.ReceiptTotal) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "*Total for %s, everyone*\n\n", req.Cmd.Period.Label)
+
+	for _, share := range s.sharesInRosterOrder(total.ByUser) {
+		b.WriteString(formatPhone(share.UserID))
+		if share.UserID == req.Sender {
+			b.WriteString(" (you)")
+		}
+		fmt.Fprintf(&b, ": %s\n", formatShare(share.Total, share.Count, share.Undated))
+	}
+
+	b.WriteString("\nLatest:\n")
+	for _, r := range total.Latest {
+		b.WriteString(maskPhone(r.UserID) + " " + formatReceiptLine(r))
+		b.WriteString("\n")
+	}
+
+	return b.String()
+}
+
+// sharesInRosterOrder lists every roster member, including one with nothing
+// this period, in the order the roster names them, then anyone else who has
+// receipts (older records from before the relay existed).
+func (s *Server) sharesInRosterOrder(byUser []store.UserTotal) []store.UserTotal {
+	found := make(map[string]store.UserTotal, len(byUser))
+	for _, u := range byUser {
+		found[u.UserID] = u
+	}
+
+	var out []store.UserTotal
+	for _, member := range s.deps.Relay.Members() {
+		share, ok := found[member]
+		if !ok {
+			share = store.UserTotal{UserID: member}
+		}
+		out = append(out, share)
+		delete(found, member)
+	}
+	for _, u := range byUser {
+		if _, left := found[u.UserID]; left {
+			out = append(out, u)
+		}
+	}
+	return out
+}
+
+func formatShare(sum float64, count, undated int) string {
+	noun := "receipts"
+	if count == 1 {
+		noun = "receipt"
+	}
+	line := fmt.Sprintf("%.2f %s (%d %s", sum, model.Currency, count, noun)
+	if undated > 0 {
+		line += fmt.Sprintf(", %d dated by when I got them", undated)
+	}
+	return line + ")"
+}
+
+func formatPhone(userID string) string {
+	if userID == "" {
+		return "Unknown sender"
+	}
+	return "+" + userID
+}
+
+// maskPhone keeps the first three digits: enough to tell the relay's phones
+// apart, without printing a whole number beside every receipt.
+func maskPhone(userID string) string {
+	if userID == "" {
+		return "?"
+	}
+	if len(userID) <= 3 {
+		return "+" + userID
+	}
+	return "+" + userID[:3] + "..."
 }
 
 func (s *Server) deleteReply(ctx context.Context, req request) answer {

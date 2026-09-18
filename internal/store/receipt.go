@@ -28,6 +28,17 @@ type ReceiptTotal struct {
 
 	// Latest is newest first by insertion order, at most TotalQuery.Latest.
 	Latest []model.Receipt
+
+	// ByUser splits the same sum by who sent each receipt, ordered by UserID.
+	ByUser []UserTotal
+}
+
+// UserTotal is one sender's share of a ReceiptTotal.
+type UserTotal struct {
+	UserID  string
+	Total   float64
+	Count   int
+	Undated int
 }
 
 // TotalQuery selects the receipts a total covers. The range is half-open,

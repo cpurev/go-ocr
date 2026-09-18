@@ -70,13 +70,13 @@ func TestSumReceipts(t *testing.T) {
 	arrived := func(day int) bson.ObjectID {
 		return bson.NewObjectIDFromTimestamp(time.Date(2026, time.September, day, 0, 0, 0, 0, time.UTC))
 	}
-	ica := receiptDocument{ID: arrived(2), Number: 45, Merchant: "ICA",
+	ica := receiptDocument{ID: arrived(2), Number: 45, Merchant: "ICA", UserID: "46",
 		Currency: "SEK", Total: 100.10, Date: "2026-09-02"}
-	coop := receiptDocument{ID: arrived(3), Number: 46, Merchant: "Coop",
+	coop := receiptDocument{ID: arrived(3), Number: 46, Merchant: "Coop", UserID: "39",
 		Currency: "SEK", Total: 54.43}
-	willys := receiptDocument{ID: arrived(5), Number: 47, Merchant: "Willys",
+	willys := receiptDocument{ID: arrived(5), Number: 47, Merchant: "Willys", UserID: "46",
 		Currency: "USD", Total: 89, Date: "2026-09-04"}
-	ikea := receiptDocument{ID: arrived(6), Number: 48, Merchant: "Ikea",
+	ikea := receiptDocument{ID: arrived(6), Number: 48, Merchant: "Ikea", UserID: "39",
 		Currency: "SEK", Total: 1085.97}
 
 	tests := []struct {
@@ -95,14 +95,19 @@ func TestSumReceipts(t *testing.T) {
 			docs:   []receiptDocument{coop, ikea, ica, willys},
 			latest: 2,
 			want: ReceiptTotal{Total: 1329.50, Count: 4, Undated: 2,
-				Latest: []model.Receipt{ikea.toModel(), willys.toModel()}},
+				Latest: []model.Receipt{ikea.toModel(), willys.toModel()},
+				ByUser: []UserTotal{
+					{UserID: "39", Total: 1140.40, Count: 2, Undated: 2},
+					{UserID: "46", Total: 189.10, Count: 2},
+				}},
 		},
 		{
 			name:   "a cap past the count returns every receipt",
 			docs:   []receiptDocument{ica, willys},
 			latest: 5,
 			want: ReceiptTotal{Total: 189.10, Count: 2,
-				Latest: []model.Receipt{willys.toModel(), ica.toModel()}},
+				Latest: []model.Receipt{willys.toModel(), ica.toModel()},
+				ByUser: []UserTotal{{UserID: "46", Total: 189.10, Count: 2}}},
 		},
 	}
 

@@ -275,11 +275,12 @@ func TestTotalReply(t *testing.T) {
 	willys := model.Receipt{Number: 47, Merchant: "Willys", Total: 89, Date: "2026-09-01"}
 
 	tests := []struct {
-		name  string
-		scope Scope
-		total store.ReceiptTotal
-		err   error
-		want  string
+		name   string
+		scope  Scope
+		roster *relay.Roster
+		total  store.ReceiptTotal
+		err    error
+		want   string
 	}{
 		{
 			name:  "one receipt is singular",
@@ -306,12 +307,33 @@ func TestTotalReply(t *testing.T) {
 				"#44 Ikea, 385.97 SEK, 2026-08-30\n",
 		},
 		{
-			name:  "everyone says so in the header",
-			scope: scopeEveryone,
-			total: store.ReceiptTotal{Total: 243.53, Count: 2, Latest: []model.Receipt{ica, willys}},
+			name:   "everyone is split by phone, in roster order, with whose each latest is",
+			scope:  scopeEveryone,
+			roster: relay.New([]string{"+" + bob, "+" + alice}),
+			total: store.ReceiptTotal{Total: 243.53, Count: 2,
+				Latest: []model.Receipt{withUser(ica, alice), withUser(willys, bob)},
+				ByUser: []store.UserTotal{
+					{UserID: alice, Total: 154.53, Count: 1},
+					{UserID: bob, Total: 89, Count: 1, Undated: 1},
+				}},
 			want: "*Total for September 2026, everyone*\n\n" +
-				"Total: 243.53 SEK (2 receipts)\n\n" +
-				"Latest:\n#48 ICA, 154.53 SEK, 2026-09-04\n#47 Willys, 89.00 SEK, 2026-09-01\n",
+				"+" + bob + ": 89.00 SEK (1 receipt, 1 dated by when I got them)\n" +
+				"+" + alice + " (you): 154.53 SEK (1 receipt)\n\n" +
+				"Latest:\n" +
+				"+976... #48 ICA, 154.53 SEK, 2026-09-04\n" +
+				"+976... #47 Willys, 89.00 SEK, 2026-09-01\n",
+		},
+		{
+			name:   "a roster member with nothing still gets a line",
+			scope:  scopeEveryone,
+			roster: relay.New([]string{"+" + alice, "+" + bob}),
+			total: store.ReceiptTotal{Total: 154.53, Count: 1,
+				Latest: []model.Receipt{withUser(ica, alice)},
+				ByUser: []store.UserTotal{{UserID: alice, Total: 154.53, Count: 1}}},
+			want: "*Total for September 2026, everyone*\n\n" +
+				"+" + alice + " (you): 154.53 SEK (1 receipt)\n" +
+				"+" + bob + ": 0.00 SEK (0 receipts)\n\n" +
+				"Latest:\n+976... #48 ICA, 154.53 SEK, 2026-09-04\n",
 		},
 		{
 			name: "nothing in that month",
@@ -338,7 +360,7 @@ func TestTotalReply(t *testing.T) {
 					return tt.total, tt.err
 				},
 			}
-			srv := newCommandServer(t, nil, receipts)
+			srv := newCommandServer(t, tt.roster, receipts)
 
 			got := srv.totalReply(context.Background(),
 				request{Sender: alice, Cmd: Command{Period: september, Scope: tt.scope}}).body
@@ -425,4 +447,9 @@ func TestAddReply(t *testing.T) {
 			}
 		})
 	}
+}
+
+func withUser(r model.Receipt, userID string) model.Receipt {
+	r.UserID = userID
+	return r
 }

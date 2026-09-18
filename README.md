@@ -338,7 +338,9 @@ number, because every receipt is SEK. That includes older receipts the database
 still labels USD. Under the number come the five receipts in the total that
 arrived last, newest first. A receipt OCR could not date is counted by when it
 arrived rather than dropped from the month, and the reply says how many went in
-that way. `total all` counts everyone on the relay instead of just the asker.
+that way. `total all` covers everyone on the relay instead of just the asker, with
+one line per phone rather than a combined figure, and marks each of the latest
+receipts with the first three digits of the phone that sent it (`+467...`).
 
 `delete` demands a number and refuses anything after it, where `edit` takes a
 number, a list of fields, or both. A wrong edit is repairable and a wrong delete
